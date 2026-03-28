@@ -1,0 +1,34 @@
+# Supervisor Harness Configuration
+# Configured to supervise the RAG research loop.
+
+[project]
+name = "rag-supervisor"
+
+[supervised]
+repo = "../rag-research-loop"
+default_prompt = "/improve-rag"
+skill_name = "improve-rag"
+agents = ["evaluator", "improver"]
+config_dirs = ["~/.claude"]
+
+[reports]
+primary = "{tmp}/rag-eval-report.json"
+
+[reports.metric]
+report = "primary"
+field = "precision_at_5"
+direction = "maximize"
+
+[log]
+path = "{tmp}/cc-{name}.log"
+
+[phases]
+sequence = ["E", "I"]
+labels = { E = "evaluate", I = "improve" }
+markers = { E = "Running evaluation", I = "Improving" }
+
+[revert]
+paths = ["src/", "tests/"]
+
+[stop_hook]
+sleep_seconds = 120

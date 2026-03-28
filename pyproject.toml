@@ -1,0 +1,60 @@
+[project]
+name = "sar-supervisor"
+version = "0.1.0"
+requires-python = "==3.13.*"
+dependencies = []
+
+[project.scripts]
+supervisor-harness = "supervisor_harness.cli:main"
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/supervisor_harness"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
+
+[tool.pixi.pypi-dependencies]
+sar-supervisor = { path = ".", editable = true }
+harness-core = { path = "../sar-harness-core", editable = true }
+
+[tool.pixi.environments]
+dev = { features = ["dev"], solve-group = "default" }
+
+[tool.pixi.tasks]
+loop = "PYTHONPATH=src python -m supervisor_harness.cli loop"
+loop-once = "PYTHONPATH=src python -m supervisor_harness.cli loop --once"
+monitor = "PYTHONPATH=src python -m supervisor_harness.cli monitor --follow"
+watch-status = "PYTHONPATH=src python -m supervisor_harness.cli watch-status --interval-seconds 30"
+snapshot = "PYTHONPATH=src python -m supervisor_harness.cli snapshot"
+history = "PYTHONPATH=src python -m supervisor_harness.cli history --limit 20"
+status = "PYTHONPATH=src python -m supervisor_harness.cli status"
+stop = "PYTHONPATH=src python -m supervisor_harness.cli stop"
+clean = "PYTHONPATH=src python -m supervisor_harness.cli clean --include-log"
+prompt-list = "PYTHONPATH=src python -m supervisor_harness.cli prompt-list"
+prompt-read = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-read", depends-on = [] }
+prompt-edit = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-edit", depends-on = [] }
+prompt-diff = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-diff", depends-on = [] }
+prompt-history = "PYTHONPATH=src python -m supervisor_harness.cli prompt-history"
+restore = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli restore", depends-on = [] }
+revert-safe = "PYTHONPATH=src python -m supervisor_harness.cli revert-safe"
+
+[tool.pixi.feature.dev.tasks]
+test = "PYTHONPATH=src python -m pytest tests/ -v"
+
+[tool.pixi.dependencies]
+python = "3.13.*"
+
+[dependency-groups]
+dev = ["pytest>=8,<9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = ["-v", "--tb=short"]

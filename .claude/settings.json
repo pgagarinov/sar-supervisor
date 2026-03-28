@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/stop-check.sh",
+            "timeout": 210,
+            "statusMessage": "Checking research loop status..."
+          }
+        ]
+      }
+    ]
+  }
+}
