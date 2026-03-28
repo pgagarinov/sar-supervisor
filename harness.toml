@@ -5,7 +5,7 @@
 name = "rag-supervisor"
 
 [supervised]
-repo = "../rag-research-loop"
+repo = "../sar-research-loop"
 default_prompt = "/improve-rag"
 skill_name = "improve-rag"
 agents = ["evaluator", "improver"]
