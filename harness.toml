@@ -9,7 +9,7 @@ repo = "../sar-research-loop"
 default_prompt = "/improve"
 skill_name = "improve"
 agents = ["evaluator", "improver"]
-config_dirs = ["~/.claude-profile-1rsonal"]
+config_dirs = ["~/.claude-profile-1rsonal", "~/.claude-profile-2"]
 
 [reports]
 primary = "{tmp}/rag-eval-report.json"
