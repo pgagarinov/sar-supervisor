@@ -1,10 +1,10 @@
 ---
-name: start-research
+name: start
 description: "Start the research loop and begin monitoring"
 user_invocable: true
 ---
 
-# /start-research — Launch the Research Loop
+# /start — Launch the Research Loop
 
 Start the inner research loop and begin the supervisor monitoring cycle.
 

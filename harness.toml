@@ -6,8 +6,8 @@ name = "rag-supervisor"
 
 [supervised]
 repo = "../sar-research-loop"
-default_prompt = "/improve-rag"
-skill_name = "improve-rag"
+default_prompt = "/improve"
+skill_name = "improve"
 agents = ["evaluator", "improver"]
 config_dirs = ["~/.claude"]
 

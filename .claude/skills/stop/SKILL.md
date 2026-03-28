@@ -1,10 +1,10 @@
 ---
-name: stop-research
+name: stop
 description: "Stop the research loop and capture final snapshot"
 user_invocable: true
 ---
 
-# /stop-research — Stop the Research Loop
+# /stop — Stop the Research Loop
 
 Gracefully stop the running research loop and capture the final state.
 
