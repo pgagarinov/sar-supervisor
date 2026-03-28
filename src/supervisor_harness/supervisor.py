@@ -3,15 +3,23 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import signal
 import subprocess
 import time
 from typing import Any
+
+from harness_core.checkpoint import (
+    _sha1,
+    capture_code_state,
+    restore_code_state,
+    resolve_snapshot as _resolve_snapshot,
+    DEFAULT_REVERT_PATHS,
+)
+from harness_core.git_utils import git_command, git_status, commit_claude_changes
+from harness_core.metrics import report_summary, extract_metric
 
 from .config import LaunchSpec, RepoPaths, build_launch_spec, load_state, save_state
 from .stream_json import ToolUse, parse_stream_log
@@ -62,14 +70,6 @@ class AnalysisReport:
         }
 
 
-def _sha1(path: Path) -> str:
-    digest = hashlib.sha1()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _prompt_assets(paths: RepoPaths) -> dict[str, dict[str, Any]]:
     assets: dict[str, Path] = {paths.skill_name: paths.skill_path}
     assets.update(paths.agent_paths)
@@ -112,21 +112,6 @@ def _load_json_file(path: Path) -> Any:
         return {"parse_error": True}
 
 
-def _report_summary_generic(payload: Any) -> Any:
-    """Extract scalar values and list counts from any JSON report."""
-    if payload is None:
-        return None
-    if not isinstance(payload, dict):
-        return {"type": type(payload).__name__}
-    summary: dict[str, Any] = {}
-    for key, value in payload.items():
-        if isinstance(value, (int, float, str, bool, type(None))):
-            summary[key] = value
-        elif isinstance(value, list):
-            summary[f"{key}_count"] = len(value)
-    return summary
-
-
 def _collect_report_summaries(paths: RepoPaths) -> dict[str, Any]:
     summaries: dict[str, Any] = {}
     for report_path in paths.report_paths:
@@ -140,8 +125,7 @@ def _collect_report_summaries(paths: RepoPaths) -> dict[str, Any]:
                 else None
             )
             continue
-        payload = _load_json_file(report_path)
-        summaries[report_path.name] = _report_summary_generic(payload)
+        summaries[report_path.name] = report_summary(report_path)
     return summaries
 
 
@@ -181,27 +165,6 @@ def _collect_dispatches(paths: RepoPaths) -> list[Dispatch]:
     return dispatches
 
 
-def _repo_command(paths: RepoPaths, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=paths.supervised_repo,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-
-def _repo_status(paths: RepoPaths) -> dict[str, Any]:
-    branch = _repo_command(paths, "rev-parse", "--abbrev-ref", "HEAD")
-    head = _repo_command(paths, "rev-parse", "HEAD")
-    status = _repo_command(paths, "status", "--short")
-    return {
-        "branch": branch.stdout.strip() if branch.returncode == 0 else None,
-        "head": head.stdout.strip() if head.returncode == 0 else None,
-        "status_lines": [line for line in status.stdout.splitlines() if line],
-    }
-
-
 def analyze_log(paths: RepoPaths) -> AnalysisReport:
     transcript = parse_stream_log(paths.log_path)
     grouped_tool_counts: dict[str, dict[str, int]] = defaultdict(dict)
@@ -223,7 +186,7 @@ def analyze_log(paths: RepoPaths) -> AnalysisReport:
         latest_thinking=latest_thinking,
         report_summaries=_collect_report_summaries(paths),
         prompt_assets=_prompt_assets(paths),
-        repo_status=_repo_status(paths),
+        repo_status=git_status(paths.supervised_repo),
     )
 
 
@@ -231,6 +194,7 @@ def _copy_if_exists(source: Path, target: Path) -> bool:
     if not source.exists():
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
+    import shutil
     shutil.copy2(source, target)
     return True
 
@@ -239,197 +203,21 @@ def _snapshot_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
 
-def _capture_code_state(paths: RepoPaths, snapshot_dir: Path) -> dict[str, Any]:
-    """Capture the supervised repo's working tree state as a patch + untracked archive."""
-    code_state_dir = snapshot_dir / "code-state"
-    code_state_dir.mkdir(parents=True, exist_ok=True)
-
-    head = _repo_command(paths, "rev-parse", "HEAD")
-    branch = _repo_command(paths, "rev-parse", "--abbrev-ref", "HEAD")
-
-    # Capture tracked modifications as a binary patch
-    diff = subprocess.run(
-        ["git", "diff", "--binary", "HEAD"],
-        cwd=paths.supervised_repo,
-        check=False,
-        capture_output=True,
-    )
-    patch_path = code_state_dir / "tracked.patch"
-    patch_path.write_bytes(diff.stdout)
-
-    # Capture untracked files as a tar.gz
-    untracked = _repo_command(paths, "ls-files", "--others", "--exclude-standard")
-    untracked_files = [f for f in untracked.stdout.splitlines() if f.strip()]
-    untracked_archive = code_state_dir / "untracked.tar.gz"
-    if untracked_files:
-        subprocess.run(
-            ["tar", "czf", str(untracked_archive), *untracked_files],
-            cwd=paths.supervised_repo,
-            check=False,
-            capture_output=True,
-        )
-    else:
-        # Create empty archive
-        subprocess.run(
-            ["tar", "czf", str(untracked_archive), "--files-from", "/dev/null"],
-            check=False,
-            capture_output=True,
-        )
-
-    return {
-        "head": head.stdout.strip() if head.returncode == 0 else None,
-        "branch": branch.stdout.strip() if branch.returncode == 0 else None,
-        "tracked_patch_bytes": len(diff.stdout),
-        "untracked_file_count": len(untracked_files),
-        "untracked_archive_bytes": untracked_archive.stat().st_size if untracked_archive.exists() else 0,
-    }
-
-
-def restore_code_state(paths: RepoPaths, snapshot_dir: Path) -> dict[str, Any]:
-    """Restore the supervised repo to the state captured in a snapshot."""
-    code_state_dir = snapshot_dir / "code-state"
-    patch_path = code_state_dir / "tracked.patch"
-    untracked_archive = code_state_dir / "untracked.tar.gz"
-
-    if not code_state_dir.exists():
-        raise FileNotFoundError(f"No code-state in snapshot: {snapshot_dir}")
-
-    # Read snapshot metadata to verify HEAD matches
-    snapshot_json = snapshot_dir / "snapshot.json"
-    if snapshot_json.exists():
-        snap = json.loads(snapshot_json.read_text(encoding="utf-8"))
-        snap_head = snap.get("code_state", {}).get("head")
-        current_head = _repo_command(paths, "rev-parse", "HEAD").stdout.strip()
-        if snap_head and snap_head != current_head:
-            raise ValueError(
-                f"HEAD mismatch: snapshot was taken at {snap_head[:12]}, "
-                f"current is {current_head[:12]}. The patch may not apply cleanly."
-            )
-
-    # Reset working tree
-    subprocess.run(
-        ["git", "checkout", "--", "."],
-        cwd=paths.supervised_repo,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "clean", "-fd"],
-        cwd=paths.supervised_repo,
-        check=True,
-        capture_output=True,
-    )
-
-    applied = {"tracked_applied": False, "untracked_extracted": False}
-
-    # Apply tracked patch
-    if patch_path.exists() and patch_path.stat().st_size > 0:
-        result = subprocess.run(
-            ["git", "apply", "--binary", str(patch_path)],
-            cwd=paths.supervised_repo,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        applied["tracked_applied"] = result.returncode == 0
-        if result.returncode != 0:
-            applied["tracked_error"] = result.stderr.strip()
-
-    # Extract untracked files
-    if untracked_archive.exists() and untracked_archive.stat().st_size > 0:
-        result = subprocess.run(
-            ["tar", "xzf", str(untracked_archive)],
-            cwd=paths.supervised_repo,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        applied["untracked_extracted"] = result.returncode == 0
-
-    # Verify
-    status = _repo_command(paths, "status", "--short")
-    applied["status_lines"] = len([l for l in status.stdout.splitlines() if l.strip()])
-    return applied
-
-
 def resolve_snapshot(paths: RepoPaths, identifier: str) -> Path:
-    """Resolve a snapshot identifier to a directory path.
-
-    Accepts: full path, snapshot ID prefix, or 'best' (best primary_metric).
-    """
-    if identifier == "best":
-        if not paths.history_path.exists():
-            raise FileNotFoundError("No history.jsonl -- no snapshots to search")
-        metric_cfg = paths.config.get("reports", {}).get("metric", {})
-        direction = metric_cfg.get("direction", "minimize")
-        best_path = None
-        best_value = float("inf") if direction == "minimize" else float("-inf")
-        for line in paths.history_path.read_text(encoding="utf-8").splitlines():
-            entry = json.loads(line)
-            value = entry.get("primary_metric")
-            if value is not None:
-                is_better = (
-                    (direction == "minimize" and value < best_value)
-                    or (direction == "maximize" and value > best_value)
-                )
-                if is_better:
-                    best_value = value
-                    best_path = entry.get("path")
-        if best_path is None:
-            raise FileNotFoundError("No snapshots with primary_metric data found")
-        p = Path(best_path)
-        if not p.exists():
-            raise FileNotFoundError(f"Best snapshot dir no longer exists: {p}")
-        return p
-
-    # Try as absolute path
-    p = Path(identifier)
-    if p.is_absolute() and p.exists():
-        return p
-
-    # Try as snapshot ID prefix
-    if paths.snapshots_dir.exists():
-        matches = sorted(paths.snapshots_dir.glob(f"{identifier}*"))
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            raise ValueError(
-                f"Ambiguous prefix '{identifier}' matches {len(matches)} snapshots: "
-                + ", ".join(m.name for m in matches[:5])
-            )
-
-    raise FileNotFoundError(f"No snapshot found for '{identifier}'")
-
-
-DEFAULT_REVERT_PATHS = ("src/", "tests/", "lib/")
-
-
-def _commit_claude_changes(paths: RepoPaths) -> bool:
-    """Commit .claude/ changes in the supervised repo so they survive reverts."""
-    # Check if there are .claude/ changes
-    result = subprocess.run(
-        ["git", "diff", "--name-only", ".claude/"],
-        cwd=paths.supervised_repo,
-        capture_output=True,
-        text=True,
+    """Resolve a snapshot identifier to a directory path."""
+    metric_cfg = paths.config.get("reports", {}).get("metric", {})
+    direction = metric_cfg.get("direction", "minimize")
+    return _resolve_snapshot(
+        snapshots_dir=paths.snapshots_dir,
+        history_path=paths.history_path,
+        identifier=identifier,
+        direction=direction,
     )
-    changed = [f for f in result.stdout.strip().splitlines() if f]
-    if not changed:
-        return False
-    # Stage and commit .claude/ changes
-    subprocess.run(
-        ["git", "add", ".claude/"],
-        cwd=paths.supervised_repo,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "commit", "-m", "Auto-commit .claude/ prompt edits before revert"],
-        cwd=paths.supervised_repo,
-        check=True,
-        capture_output=True,
-    )
-    return True
+
+
+def restore_code_state_for_paths(paths: RepoPaths, snapshot_dir: Path) -> dict[str, Any]:
+    """Restore the supervised repo to the state captured in a snapshot."""
+    return restore_code_state(paths.supervised_repo, snapshot_dir)
 
 
 def safe_revert(
@@ -445,7 +233,7 @@ def safe_revert(
         revert_paths = tuple(config_revert) if config_revert else DEFAULT_REVERT_PATHS
 
     # Commit .claude/ changes first so they survive the revert
-    _commit_claude_changes(paths)
+    commit_claude_changes(paths.supervised_repo)
 
     snapshot_dir = write_snapshot(paths, label=label or "pre-revert")
 
@@ -518,7 +306,7 @@ def write_snapshot(paths: RepoPaths, *, label: str | None = None) -> Path:
             snapshot_dir / "prompt-assets" / "agents" / f"{agent_name}.md",
         )
 
-    code_state = _capture_code_state(paths, snapshot_dir)
+    code_state = capture_code_state(paths.supervised_repo, snapshot_dir)
     payload["code_state"] = code_state
     payload["copied_files"] = copied_files
     snapshot_json = snapshot_dir / "snapshot.json"

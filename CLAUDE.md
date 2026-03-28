@@ -205,7 +205,7 @@ The quality of prompt assets is the binding constraint on the quality of the aut
 ## Project Structure
 
 ```
-supervisor-harness/               # This project
+sar-supervisor/                   # This project
   CLAUDE.md                       # This file
   harness.toml                    # Project configuration — edit this first
   experiments/

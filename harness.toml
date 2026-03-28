@@ -2,7 +2,7 @@
 # Configured to supervise the RAG research loop.
 
 [project]
-name = "rag-supervisor"
+name = "sar-supervisor"
 
 [supervised]
 repo = "../sar-research-loop"

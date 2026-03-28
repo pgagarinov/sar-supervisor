@@ -11,38 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from harness_core.metrics import metric_trend, trend_direction
+
 from .config import RepoPaths, load_state
 from .supervisor import analyze_log, extract_primary_metric, process_running, read_pid
-
-
-def _failure_trend(paths: RepoPaths, limit: int = 10) -> list[int | float]:
-    """Extract recent primary metric values from history.jsonl."""
-    if not paths.history_path.exists():
-        return []
-    counts: list[int | float] = []
-    for line in paths.history_path.read_text(encoding="utf-8").splitlines():
-        try:
-            entry = json.loads(line)
-            value = entry.get("primary_metric")
-            if value is not None:
-                counts.append(value)
-        except json.JSONDecodeError:
-            continue
-    return counts[-limit:]
-
-
-def _trend_direction(trend: list[int | float]) -> str:
-    if len(trend) < 2:
-        return "insufficient_data"
-    if len(trend) >= 3 and trend[-1] < trend[-2] < trend[-3]:
-        return "improving"
-    if len(trend) >= 3 and all(abs(trend[-1] - trend[-(i + 1)]) <= 2 for i in range(1, min(3, len(trend)))):
-        return "stalled"
-    if trend[-1] > trend[-2]:
-        return "regressing"
-    if trend[-1] < trend[-2]:
-        return "improving"
-    return "flat"
 
 
 AUTONOMY_DIRECTIVE = (
@@ -359,8 +331,8 @@ def generate_stop_hook_output(paths: RepoPaths | None = None) -> str:
     events = report.get("event_count", 0)
     dispatches = report.get("dispatches", [])
     iterations = _count_iterations(dispatches, paths.agent_names)
-    trend = _failure_trend(paths)
-    direction = _trend_direction(trend)
+    trend = metric_trend(paths.history_path)
+    direction = trend_direction(trend)
 
     metric_cfg = paths.config.get("reports", {}).get("metric", {})
     metric_field = metric_cfg.get("field", "metric")
