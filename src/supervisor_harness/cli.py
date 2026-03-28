@@ -508,7 +508,7 @@ def _cmd_loop(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="supervisor-harness")
+    parser = argparse.ArgumentParser(prog="sar-supervisor")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--workspace-root")
     common.add_argument("--supervised-repo")
