@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import secrets
 import signal
 import subprocess
 import time
@@ -452,3 +453,209 @@ def restart_run(
         pixi_bin=pixi_bin,
         config_dir=config_dir,
     )
+
+
+# --- Experiment management ---
+
+
+def _generate_experiment_id(paths: RepoPaths, prefix: str = "exp") -> str:
+    """Generate a unique experiment ID with timestamp and random suffix."""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    suffix = secrets.token_hex(2)
+    exp_id = f"{prefix}-{ts}-{suffix}"
+    pid_path = paths.state_dir / f"{paths.skill_name}--{exp_id}.pid"
+    if pid_path.exists():
+        return _generate_experiment_id(paths, prefix)
+    return exp_id
+
+
+def _create_experiment_worktree(
+    supervised_repo: Path, experiment_id: str, base_branch: str | None = None,
+) -> Path:
+    """Create an isolated worktree of the supervised repo for this experiment.
+
+    Returns the worktree path.
+    """
+    worktree_path = Path(f"/tmp/sar-research-loop--{experiment_id}")
+    if worktree_path.exists():
+        return worktree_path
+
+    branch_base = base_branch or "HEAD"
+    subprocess.run(
+        ["git", "worktree", "add", str(worktree_path), "-b", experiment_id, branch_base],
+        cwd=supervised_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Symlink .pixi from the main repo so pixi env is shared
+    pixi_dir = supervised_repo / ".pixi"
+    worktree_pixi = worktree_path / ".pixi"
+    if pixi_dir.exists() and not worktree_pixi.exists():
+        worktree_pixi.symlink_to(pixi_dir.resolve())
+
+    return worktree_path
+
+
+def _remove_experiment_worktree(
+    supervised_repo: Path, experiment_id: str,
+) -> None:
+    """Remove an experiment's worktree and branch."""
+    worktree_path = Path(f"/tmp/sar-research-loop--{experiment_id}")
+    if worktree_path.exists():
+        subprocess.run(
+            ["git", "worktree", "remove", str(worktree_path), "--force"],
+            cwd=supervised_repo,
+            check=False,
+            capture_output=True,
+        )
+    # Clean up the branch
+    subprocess.run(
+        ["git", "branch", "-D", experiment_id],
+        cwd=supervised_repo,
+        check=False,
+        capture_output=True,
+    )
+
+
+def start_experiment(
+    paths: RepoPaths,
+    experiment_id: str | None = None,
+    *,
+    prompt: str | None = None,
+    variant_path: Path | None = None,
+    base_branch: str | None = None,
+    claude_bin: str | None = None,
+    pixi_bin: str | None = None,
+    config_dir: Path | None = None,
+    clean_first: bool = True,
+) -> tuple[LaunchSpec, int, str]:
+    """Start an experiment with a unique ID in an isolated worktree.
+
+    Each experiment gets its own copy of the research-loop repo so
+    different SKILL.md variants don't collide.
+
+    Returns (launch_spec, pid, experiment_id).
+    """
+    exp_cfg = paths.config.get("experiments", {})
+    prefix = exp_cfg.get("id_prefix", "exp")
+
+    if experiment_id is None:
+        experiment_id = _generate_experiment_id(paths, prefix=prefix)
+
+    # Create isolated worktree for this experiment
+    worktree_path = _create_experiment_worktree(
+        paths.supervised_repo, experiment_id, base_branch=base_branch,
+    )
+
+    # If a variant SKILL.md was provided, apply it to the worktree
+    if variant_path and variant_path.exists():
+        skill_dest = worktree_path / ".claude" / "skills" / paths.skill_name / "SKILL.md"
+        skill_dest.parent.mkdir(parents=True, exist_ok=True)
+        import shutil as _shutil
+        _shutil.copy2(variant_path, skill_dest)
+
+    # Discover paths namespaced to this experiment, pointing at the worktree
+    exp_paths = RepoPaths.discover(
+        workspace_root=paths.workspace_root,
+        supervised_repo=worktree_path,
+        experiment_id=experiment_id,
+    )
+
+    default_prompt = paths.config.get("supervised", {}).get(
+        "default_prompt", "/default"
+    )
+    resolved_prompt = prompt or default_prompt
+
+    if clean_first:
+        clean_temp_files(exp_paths, include_log=True)
+
+    # Reset Haiku offset for fresh log analysis
+    haiku_offset = exp_paths.state_dir / "haiku-offset"
+    if haiku_offset.exists():
+        haiku_offset.unlink()
+
+    launch_spec = build_launch_spec(
+        exp_paths,
+        prompt=resolved_prompt,
+        claude_bin=claude_bin,
+        pixi_bin=pixi_bin,
+        config_dir=config_dir,
+        experiment_id=experiment_id,
+        base_branch=base_branch,
+    )
+    exp_paths.state_dir.mkdir(parents=True, exist_ok=True)
+    launch_spec.log_path.parent.mkdir(parents=True, exist_ok=True)
+    with launch_spec.log_path.open("wb") as log_handle:
+        process = subprocess.Popen(
+            ["/bin/bash", "-lc", launch_spec.command],
+            cwd=launch_spec.cwd,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    save_state(exp_paths, pid=process.pid, launch_spec=launch_spec)
+    return launch_spec, process.pid, experiment_id
+
+
+def stop_experiment(paths: RepoPaths, experiment_id: str) -> bool:
+    """Stop a running experiment and clean up its worktree."""
+    worktree_path = Path(f"/tmp/sar-research-loop--{experiment_id}")
+    supervised = worktree_path if worktree_path.exists() else paths.supervised_repo
+
+    exp_paths = RepoPaths.discover(
+        workspace_root=paths.workspace_root,
+        supervised_repo=supervised,
+        experiment_id=experiment_id,
+    )
+    stopped = stop_run(exp_paths)
+
+    # Clean up the worktree
+    _remove_experiment_worktree(paths.supervised_repo, experiment_id)
+
+    return stopped
+
+
+def list_experiments(paths: RepoPaths) -> list[dict[str, Any]]:
+    """List all experiments (running and stopped) from PID files in .supervisor/."""
+    experiments: list[dict[str, Any]] = []
+    if not paths.state_dir.exists():
+        return experiments
+
+    skill_name = paths.skill_name
+    prefix = f"{skill_name}--"
+    suffix = ".pid"
+
+    for pid_file in sorted(paths.state_dir.glob(f"{prefix}*{suffix}")):
+        name = pid_file.stem  # e.g. "start--exp-20260328T120000-a1b2"
+        if not name.startswith(prefix):
+            continue
+        exp_id = name[len(prefix):]
+
+        # Read PID
+        try:
+            pid = int(pid_file.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError):
+            pid = None
+
+        running = bool(pid and process_running(pid))
+
+        # Read state
+        state_file = paths.state_dir / f"{name}-state.json"
+        state: dict[str, Any] | None = None
+        if state_file.exists():
+            try:
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        experiments.append({
+            "experiment_id": exp_id,
+            "pid": pid,
+            "running": running,
+            "started_at": state.get("started_at") if state else None,
+            "prompt": state.get("prompt") if state else None,
+            "log_path": state.get("log_path") if state else None,
+        })
+
+    return experiments

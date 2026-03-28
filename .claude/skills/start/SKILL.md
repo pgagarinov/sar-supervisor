@@ -4,37 +4,74 @@ description: "Start the research loop and begin monitoring"
 user_invocable: true
 ---
 
-# /start — Launch the Research Loop
+# /start — Launch and Supervise the Research Loop
 
-Start the inner research loop and begin the supervisor monitoring cycle.
+Start the inner research loop and begin active supervision. You are the outer researcher — your job is to make the inner researcher better at researching.
 
-## Steps
+## SINGLE EXPERIMENT MODE (default)
 
-1. **Check if already running**:
+### 1. Pre-flight
+
+```bash
+pixi run status
+```
+If already running, report state and stop.
+
+Verify the supervised repo is accessible:
+```bash
+pixi run prompt-list
+```
+PASS if it lists the expected skill and agents.
+
+### 2. Start the loop
+
+```bash
+pixi run loop --no-clean
+```
+
+This blocks while monitoring the researcher. The stop hook fires every ~120s with analysis. Act on the guidance: CONTINUE / INVESTIGATE / PIVOT.
+
+### 3. Active supervision
+
+On each stop hook cycle:
+- Read the metric trend — is it improving, stalled, or regressing?
+- Read deviation reports — is the researcher following its own protocol?
+- Make a decision and ACT (see CLAUDE.md for the mandatory thinking protocol)
+
+If stalled:
+1. Read the researcher's current prompts: `pixi run prompt-read skill`, `pixi run prompt-read evaluator`, `pixi run prompt-read improver`
+2. Analyze what the researcher is doing wrong (bad experiment discipline, not pivoting, repeating failed approaches, etc.)
+3. Edit prompts: `echo "new content" | pixi run prompt-edit <name>`
+4. Restart: `pixi run stop && pixi run loop --no-clean`
+
+### 4. When the loop returns
+
+Analyze results:
+- `pixi run history` — metric progression
+- `pixi run prompt-history` — what prompt changes were made
+
+Decide: restart with same prompts, edit prompts and restart, or report success.
+
+## PARALLEL EXPERIMENT MODE
+
+Use when testing multiple researcher SKILL.md variants simultaneously.
+
+### Setup
+
+1. Create variants in `experiments/variants/` (each is a complete SKILL.md for the researcher)
+2. For each variant:
    ```bash
-   pixi run status
+   cat experiments/variants/X.md | pixi run prompt-edit skill
+   pixi run experiment start --id exp-X
    ```
-   If running, report the current state and stop.
+3. Monitor all: `pixi run experiment list`
+4. Compare: `pixi run experiment compare`
+5. Select winner, stop losers: `pixi run experiment stop --id exp-X`
+6. Continue best variant as the main run
 
-2. **Verify the research loop repo is accessible**:
-   Check that the supervised repo path from `harness.toml` exists and has `.claude/skills/`.
+## What You Do NOT Do
 
-3. **Verify the RAG target is accessible**:
-   Check that `../sar-rag-target` (relative to the research loop) exists and `pixi run eval` works.
-
-4. **Start the loop** (preserving any existing code changes):
-   ```bash
-   pixi run loop --no-clean
-   ```
-   This launches `claude -p /improve-rag` in the research loop repo and begins monitoring.
-
-5. **Report**: PID, log path, and the current metric value.
-
-## What Happens Next
-
-The supervisor loop:
-- Monitors the stream-json log
-- Snapshots on state changes
-- Fires the stop hook periodically (every 120s)
-- The stop hook analyzes metric trends and detects deviations
-- If stalled, the outer researcher (YOU) should read snapshots, analyze why, and edit the research loop's SKILL.md or agent definitions via `/edit-prompts`
+- **Never interact with the target directly** — you don't know what the target is. The researcher handles that.
+- **Never read target code, run target commands, or verify target state** — that's the researcher's domain.
+- **Never edit target files** — your lever is the researcher's prompt assets only.
+- You supervise the **researcher's methodology**, not its domain work.

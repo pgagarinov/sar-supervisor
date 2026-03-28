@@ -1,5 +1,5 @@
 # Supervisor Harness Configuration
-# Configured to supervise the RAG research loop.
+# Domain-specific values below — supervisor code reads these generically.
 
 [project]
 name = "sar-supervisor"
@@ -9,7 +9,6 @@ repo = "../sar-research-loop"
 default_prompt = "/start"
 skill_name = "start"
 agents = ["evaluator", "improver"]
-config_dirs = ["~/.claude-profile-1rsonal", "~/.claude-profile-2"]
 
 [reports]
 primary = "{tmp}/rag-eval-report.json"
@@ -32,3 +31,7 @@ paths = ["src/", "tests/"]
 
 [stop_hook]
 sleep_seconds = 120
+
+[experiments]
+max_concurrent = 3
+id_prefix = "exp"

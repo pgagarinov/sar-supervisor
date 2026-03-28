@@ -20,10 +20,10 @@ Remove all supervisor runtime state so the next `/start` begins fresh.
    pixi run clean --include-log --include-snapshots
    ```
 
-3. Clean temp files produced by the inner loop:
+3. Clean temp report files (paths from harness.toml `[reports]` section):
    ```bash
-   rm -rf /tmp/fluxapi-chroma
-   rm -f /tmp/rag-eval-report.json
+   pixi run clean --include-log
    ```
+   This removes all report files, log files, and PID/state files configured in harness.toml.
 
 4. Report what was cleaned.

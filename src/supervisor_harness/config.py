@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import shlex
 import shutil
@@ -59,6 +60,7 @@ class RepoPaths:
         workspace_root: Path | None = None,
         supervised_repo: Path | None = None,
         log_path: Path | None = None,
+        experiment_id: str | None = None,
     ) -> "RepoPaths":
         workspace = (workspace_root or Path.cwd()).expanduser().resolve()
         config = load_harness_config(workspace)
@@ -81,9 +83,15 @@ class RepoPaths:
         skill_name = supervised_cfg.get("skill_name", "default")
         agent_names = tuple(supervised_cfg.get("agents", []))
 
-        # Config dirs
-        config_dirs_raw = supervised_cfg.get("config_dirs", ["~/.claude"])
-        config_dirs = tuple(Path(d).expanduser() for d in config_dirs_raw)
+        # Config dirs — from CLAUDE_CONFIG_DIRS env var (colon-separated, required)
+        config_dirs_env = os.environ.get("CLAUDE_CONFIG_DIRS", "")
+        if not config_dirs_env:
+            raise RuntimeError(
+                "CLAUDE_CONFIG_DIRS env var is not set. "
+                "Run /setup-env in the integration hub or set it manually "
+                "(colon-separated list of ~/.claude-* directories)."
+            )
+        config_dirs = tuple(Path(d).expanduser() for d in config_dirs_env.split(":") if d)
 
         # Build report paths from config
         reports_cfg = config.get("reports", {})
@@ -100,11 +108,20 @@ class RepoPaths:
         # Log path
         log_cfg = config.get("log", {})
         log_template = log_cfg.get("path", "{tmp}/cc-{name}.log")
-        resolved_log = log_path or Path(
-            _resolve_path_template(log_template, project_name)
-        )
+        if experiment_id and not log_path:
+            resolved_log = Path(
+                _resolve_path_template(log_template, project_name)
+                .replace(".log", f"--{experiment_id}.log")
+            )
+        else:
+            resolved_log = log_path or Path(
+                _resolve_path_template(log_template, project_name)
+            )
 
         state_dir = workspace / ".supervisor"
+
+        # When experiment_id is set, namespace PID and state paths
+        pid_name = f"{skill_name}--{experiment_id}" if experiment_id else skill_name
 
         return cls(
             workspace_root=workspace,
@@ -119,8 +136,8 @@ class RepoPaths:
             log_path=resolved_log.expanduser(),
             state_dir=state_dir,
             snapshots_dir=state_dir / "snapshots",
-            pid_path=state_dir / f"{skill_name}.pid",
-            state_path=state_dir / f"{skill_name}-state.json",
+            pid_path=state_dir / f"{pid_name}.pid",
+            state_path=state_dir / f"{pid_name}-state.json",
             latest_snapshot_path=state_dir / "latest_snapshot.json",
             history_path=state_dir / "history.jsonl",
             report_paths=tuple(report_paths_list),
@@ -153,6 +170,8 @@ def build_launch_spec(
     pixi_bin: str | None = None,
     config_dir: Path | None = None,
     enable_lsp_tool: bool = True,
+    experiment_id: str | None = None,
+    base_branch: str | None = None,
 ) -> LaunchSpec:
     resolved_claude = claude_bin or shutil.which("claude") or "claude"
     resolved_pixi = pixi_bin or shutil.which("pixi") or "pixi"
@@ -174,6 +193,10 @@ def build_launch_spec(
     if enable_lsp_tool:
         env_prefix += "ENABLE_LSP_TOOL=1 "
     env_prefix += f"CLAUDE_CONFIG_DIR={shlex.quote(str(resolved_config_dir))} "
+    if experiment_id:
+        env_prefix += f"EXPERIMENT_ID={shlex.quote(experiment_id)} "
+    if base_branch:
+        env_prefix += f"BASE_BRANCH={shlex.quote(base_branch)} "
 
     command = (
         f"{cleared_pixi_env} && "

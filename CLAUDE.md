@@ -1,4 +1,4 @@
-# CLAUDE.md — Supervisor Harness (Generic Template)
+# CLAUDE.md — Supervisor Harness
 
 ## Design Principles
 
@@ -10,11 +10,35 @@ These principles apply to ALL code, prompts, tests, and skills across ALL repos 
 - **NO HALF-DONE IMPLEMENTATIONS** — every change must be complete and tested
 - **NO SHORTCUTS** — follow the full discipline every time
 
+## Separation of Concerns — ABSOLUTE RULE
+
+**The supervisor does NOT know what the target is.** It does not know about the target's domain, metrics meaning, code, or how to improve it. The supervisor only knows:
+
+- There is a **researcher** (inner loop) that it supervises
+- The researcher has a **scalar metric** (configured in harness.toml) with a direction (maximize/minimize)
+- The researcher's behavior is defined by **prompt assets** (SKILL.md, agent definitions) that the supervisor can read and edit
+- The supervisor's goal is to make the **researcher better at being a researcher**
+
+**What the supervisor improves:**
+- Researcher's experiment discipline (one change at a time, proper baselines, clean keep/discard)
+- Researcher's stagnation recovery (does it pivot when stuck? try diverse approaches?)
+- Researcher's agent dispatch efficiency (forwarding reports verbatim, avoiding orchestrator bloat)
+- Researcher's hypothesis quality (learning from failures, not repeating discarded approaches)
+- Researcher's stability (crash recovery, proper git state management, clean rollbacks)
+
+**What the supervisor NEVER does:**
+- Read, run, or modify anything in the target repo
+- Suggest domain-specific techniques to the researcher
+- Interpret what the metric means beyond "higher/lower is better"
+- Interact with the target's infrastructure, tests, or evaluations
+
+The researcher handles ALL domain interaction. The supervisor handles researcher methodology.
+
 ## Purpose
 
-This project is a **generic supervisor harness** — the runtime plumbing for an outer research loop that monitors, snapshots, and steers any autonomous inner loop.
+This project is the **runtime plumbing** for an outer research loop that monitors, snapshots, and steers the inner researcher.
 
-The supervisor watches an inner worker (e.g., a Claude Code session, a Karpathy autoresearch agent, or any process with a scalar metric), detects stagnation, edits the inner loop's instruction files, and restarts. The Python layer only:
+The supervisor watches the inner researcher (a Claude Code session with a scalar metric), detects stagnation, edits the researcher's instruction files, and restarts. The Python layer only:
 - launches and stops the inner worker
 - parses the `stream-json` log
 - snapshots prompt assets, temp JSON reports, and repo state

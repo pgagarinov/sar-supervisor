@@ -43,7 +43,7 @@ To restart with a modified approach:
 1. Use `/edit-prompts` to modify the research loop's SKILL.md or agent definitions
 2. Use `/start-research` to restart
 
-To revert the RAG target's code:
+To revert the supervised repo's code:
 ```bash
 pixi run revert-safe
 ```
