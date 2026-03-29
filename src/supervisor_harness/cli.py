@@ -20,13 +20,20 @@ from .supervisor import (
     analyze_log,
     cleanup_state,
     clean_temp_files,
+    discard_researcher_variant,
     extract_primary_metric,
+    list_parked_variants,
     list_researcher_variants,
+    merge_branch_and_continue,
+    merge_cherry_pick,
+    merge_winner_takes_all,
+    park_researcher_variant,
     process_running,
     read_pid,
     resolve_snapshot,
     restart_run,
     restore_code_state,
+    rollback_merge,
     safe_revert,
     start_researcher_variant,
     start_run,
@@ -586,6 +593,74 @@ def _cmd_variant_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_variant_park(args: argparse.Namespace) -> int:
+    paths = _paths_from_args(args)
+    result = park_researcher_variant(paths, args.id)
+    print(f"parked: {result['variant_id']}")
+    if result.get('metrics'):
+        print(f"metrics: {json.dumps(result['metrics'])}")
+    iters = result.get('iterations', {})
+    print(f"iterations: {iters.get('total', 0)} total, {iters.get('kept', 0)} kept, {iters.get('discarded', 0)} discarded")
+    return 0
+
+
+def _cmd_variant_discard(args: argparse.Namespace) -> int:
+    paths = _paths_from_args(args)
+    discard_researcher_variant(paths, args.id)
+    print(f"discarded: {args.id}")
+    return 0
+
+
+def _cmd_variant_parked(args: argparse.Namespace) -> int:
+    paths = _paths_from_args(args)
+    parked = list_parked_variants(paths)
+    if not parked:
+        print("parked: none")
+        return 0
+    if args.json:
+        print(json.dumps(parked, indent=2))
+        return 0
+    for p in parked:
+        metrics = p.get("metrics", {})
+        metric_val = metrics.get("precision_at_5") or metrics.get("recall_at_5") or "n/a"
+        iters = p.get("iterations", {})
+        print(f"  {p['variant_id']:<40s} metric={metric_val}  kept={iters.get('kept', 0)}  target_head={str(p.get('target_head', '?'))[:12]}")
+    return 0
+
+
+def _cmd_variant_merge(args: argparse.Namespace) -> int:
+    paths = _paths_from_args(args)
+    strategy = args.strategy
+    ids = args.id.split(",")
+    if strategy == "winner-takes-all":
+        result = merge_winner_takes_all(paths, ids[0])
+    elif strategy == "cherry-pick":
+        result = merge_cherry_pick(paths, ids)
+    elif strategy == "branch-and-continue":
+        result = merge_branch_and_continue(paths, ids[0])
+    else:
+        print(f"error: unknown strategy {strategy}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        print(f"strategy: {result['strategy']}")
+        print(f"new_head: {result.get('new_head', '?')}")
+        print(f"backup: {result.get('backup', '?')}")
+        if result.get('applied'):
+            print(f"applied: {len(result['applied'])} commits")
+        if result.get('conflicts'):
+            print(f"conflicts: {len(result['conflicts'])} commits skipped")
+    return 0
+
+
+def _cmd_variant_rollback(args: argparse.Namespace) -> int:
+    paths = _paths_from_args(args)
+    result = rollback_merge(paths)
+    print(f"rolled back: {result.get('method', '?')}")
+    return 0
+
+
 def _cmd_variant_compare(args: argparse.Namespace) -> int:
     paths = _paths_from_args(args)
     variants = list_researcher_variants(paths)
@@ -763,6 +838,27 @@ def build_parser() -> argparse.ArgumentParser:
     var_compare = var_subparsers.add_parser("compare")
     var_compare.add_argument("--json", action="store_true")
     var_compare.set_defaults(func=_cmd_variant_compare)
+
+    var_park = var_subparsers.add_parser("park")
+    var_park.add_argument("--id", required=True, help="Researcher variant ID to park")
+    var_park.set_defaults(func=_cmd_variant_park)
+
+    var_discard = var_subparsers.add_parser("discard")
+    var_discard.add_argument("--id", required=True, help="Researcher variant ID to discard")
+    var_discard.set_defaults(func=_cmd_variant_discard)
+
+    var_parked = var_subparsers.add_parser("parked")
+    var_parked.add_argument("--json", action="store_true")
+    var_parked.set_defaults(func=_cmd_variant_parked)
+
+    var_merge = var_subparsers.add_parser("merge")
+    var_merge.add_argument("--id", required=True, help="Researcher variant ID(s) to merge (comma-separated for cherry-pick)")
+    var_merge.add_argument("--strategy", required=True, choices=["winner-takes-all", "cherry-pick", "branch-and-continue"])
+    var_merge.add_argument("--json", action="store_true")
+    var_merge.set_defaults(func=_cmd_variant_merge)
+
+    var_rollback = var_subparsers.add_parser("rollback")
+    var_rollback.set_defaults(func=_cmd_variant_rollback)
 
     return parser
 

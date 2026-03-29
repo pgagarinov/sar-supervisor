@@ -647,7 +647,11 @@ def start_researcher_variant(
 
 
 def stop_researcher_variant(paths: RepoPaths, variant_id: str) -> bool:
-    """Stop a running researcher variant and clean up all its clones."""
+    """Stop a running researcher variant process (does NOT destroy clones).
+
+    Use park_researcher_variant() to stop + preserve for merge decisions.
+    Use discard_researcher_variant() to stop + destroy everything.
+    """
     researcher_clone = Path(f"/tmp/sar-research-loop--{variant_id}")
     supervised = researcher_clone if researcher_clone.exists() else paths.supervised_repo
 
@@ -656,13 +660,300 @@ def stop_researcher_variant(paths: RepoPaths, variant_id: str) -> bool:
         supervised_repo=supervised,
         variant_id=variant_id,
     )
-    stopped = stop_run(var_paths)
+    return stop_run(var_paths)
 
-    # Clean up all clones and temp files
+
+def park_researcher_variant(
+    paths: RepoPaths, variant_id: str,
+) -> dict[str, Any]:
+    """Stop the process and preserve the target clone for merge decisions.
+
+    Takes a snapshot of the target clone state, reads final metrics,
+    cleans up the researcher clone (saves space), but preserves the target clone.
+    """
+    # Stop the process
+    stop_researcher_variant(paths, variant_id)
+
+    target_repo = _resolve_target_repo(paths.supervised_repo)
+    target_clone = Path(f"{target_repo}--{variant_id}")
+
+    # Auto-commit any uncommitted target changes
+    if target_clone.exists():
+        from harness_core.git_utils import git_commit as _git_commit
+        _git_commit(target_clone, "auto-commit: park researcher variant")
+
+    # Snapshot the target clone state
+    target_state: dict[str, Any] = {}
+    if target_clone.exists():
+        snapshot_dir = paths.snapshots_dir / f"variant-{variant_id}"
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        target_state = capture_code_state(target_clone, snapshot_dir / "target-state")
+
+    # Read final metrics
+    metrics: dict[str, Any] | None = None
+    report_path = Path(f"/tmp/rag-eval-report--{variant_id}.json")
+    if not report_path.exists():
+        report_path = Path("/tmp/rag-eval-report.json")
+    if report_path.exists():
+        from harness_core.metrics import report_summary
+        metrics = report_summary(report_path)
+
+    # Read iteration summary from results.tsv
+    results_path = Path(f"/tmp/sar-research-loop--{variant_id}/results.tsv")
+    if not results_path.exists():
+        results_path = paths.supervised_repo / "results.tsv"
+    total_iterations = 0
+    kept = 0
+    discarded = 0
+    if results_path.exists():
+        for line in results_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("commit") or not line.strip():
+                continue
+            total_iterations += 1
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                if parts[2] == "keep":
+                    kept += 1
+                elif parts[2] == "discard":
+                    discarded += 1
+
+    # Load variant state for config_dir
+    var_state = load_state(
+        RepoPaths.discover(
+            workspace_root=paths.workspace_root,
+            supervised_repo=Path(f"/tmp/sar-research-loop--{variant_id}")
+            if Path(f"/tmp/sar-research-loop--{variant_id}").exists()
+            else paths.supervised_repo,
+            variant_id=variant_id,
+        )
+    ) or {}
+
+    # Save parked state
+    parked_state = {
+        "variant_id": variant_id,
+        "status": "parked",
+        "parked_at": datetime.now(timezone.utc).isoformat(),
+        "target_clone": str(target_clone),
+        "target_head": target_state.get("head"),
+        "target_state": target_state,
+        "metrics": metrics,
+        "iterations": {"total": total_iterations, "kept": kept, "discarded": discarded},
+        "config_dir": var_state.get("config_dir"),
+    }
+    parked_path = paths.state_dir / f"parked-{variant_id}.json"
+    parked_path.parent.mkdir(parents=True, exist_ok=True)
+    parked_path.write_text(json.dumps(parked_state, indent=2), encoding="utf-8")
+
+    # Clean up researcher clone only (target clone preserved!)
+    researcher_clone = Path(f"/tmp/sar-research-loop--{variant_id}")
+    if researcher_clone.exists():
+        import shutil as _shutil
+        _shutil.rmtree(researcher_clone)
+
+    return parked_state
+
+
+def discard_researcher_variant(paths: RepoPaths, variant_id: str) -> None:
+    """Stop and destroy everything for a researcher variant."""
+    stop_researcher_variant(paths, variant_id)
     target_repo = _resolve_target_repo(paths.supervised_repo)
     _remove_variant_clones(paths.supervised_repo, target_repo, variant_id)
+    # Remove parked state if any
+    parked_path = paths.state_dir / f"parked-{variant_id}.json"
+    if parked_path.exists():
+        parked_path.unlink()
 
-    return stopped
+
+def list_parked_variants(paths: RepoPaths) -> list[dict[str, Any]]:
+    """List all parked researcher variants with their metrics."""
+    parked: list[dict[str, Any]] = []
+    if not paths.state_dir.exists():
+        return parked
+    for parked_file in sorted(paths.state_dir.glob("parked-*.json")):
+        try:
+            data = json.loads(parked_file.read_text(encoding="utf-8"))
+            parked.append(data)
+        except (json.JSONDecodeError, OSError):
+            continue
+    return parked
+
+
+def merge_winner_takes_all(
+    paths: RepoPaths, variant_id: str,
+) -> dict[str, Any]:
+    """Apply winning researcher variant's target state to canonical target.
+
+    Fetches from the variant's target clone and resets canonical to match.
+    Always creates a backup before merging. Returns merge result.
+    """
+    from harness_core.git_utils import git_fetch, git_head as _git_head
+
+    target_repo = _resolve_target_repo(paths.supervised_repo)
+    target_clone = Path(f"{target_repo}--{variant_id}")
+
+    if not target_clone.exists():
+        raise FileNotFoundError(
+            f"Target clone not found: {target_clone}. "
+            f"Was the researcher variant parked (not discarded)?"
+        )
+
+    # Backup canonical state
+    backup_dir = paths.snapshots_dir / "pre-merge-backup"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_state = capture_code_state(target_repo, backup_dir)
+
+    # Fetch from winning clone and reset canonical
+    fetch_head = git_fetch(target_repo, target_clone, "main")
+    if not fetch_head:
+        raise RuntimeError(f"git fetch from {target_clone} failed")
+
+    from harness_core.git_utils import git_reset_hard, git_command as _git_cmd
+    git_reset_hard(target_repo, "FETCH_HEAD")
+
+    # Update baseline tag
+    _git_cmd(target_repo, "tag", "-f", "baseline", "HEAD")
+
+    return {
+        "strategy": "winner_takes_all",
+        "variant_id": variant_id,
+        "new_head": _git_head(target_repo),
+        "backup": str(backup_dir),
+        "backup_state": backup_state,
+    }
+
+
+def merge_cherry_pick(
+    paths: RepoPaths, variant_ids: list[str],
+) -> dict[str, Any]:
+    """Cherry-pick kept commits from multiple researcher variants.
+
+    Picks commits since baseline from each variant's target clone.
+    Skips conflicting commits (reports them). Always backs up first.
+    """
+    from harness_core.git_utils import (
+        git_cherry_pick as _cherry_pick,
+        git_command as _git_cmd,
+        git_head as _git_head,
+        git_log_range as _log_range,
+    )
+
+    target_repo = _resolve_target_repo(paths.supervised_repo)
+
+    # Backup canonical state
+    backup_dir = paths.snapshots_dir / "pre-merge-backup"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_state = capture_code_state(target_repo, backup_dir)
+
+    # Get baseline commit
+    baseline_result = _git_cmd(target_repo, "rev-parse", "baseline")
+    baseline_head = baseline_result.stdout.strip() if baseline_result.returncode == 0 else None
+    if not baseline_head:
+        raise RuntimeError("Could not resolve 'baseline' tag in canonical target")
+
+    applied: list[dict[str, str]] = []
+    conflicts: list[dict[str, Any]] = []
+
+    for variant_id in variant_ids:
+        target_clone = Path(f"{target_repo}--{variant_id}")
+        if not target_clone.exists():
+            continue
+
+        # Find commits since baseline in this variant's clone
+        commits = _log_range(target_clone, baseline_head, "HEAD")
+
+        # Cherry-pick each (oldest first — reverse the list since git log is newest first)
+        for commit in reversed(commits):
+            result = _cherry_pick(target_repo, commit["hash"])
+            if result["conflicts"]:
+                conflicts.append({
+                    "variant_id": variant_id,
+                    "commit": commit,
+                })
+            else:
+                applied.append({
+                    "variant_id": variant_id,
+                    "hash": commit["hash"],
+                    "message": commit["message"],
+                })
+
+    # Update baseline tag if anything was applied
+    if applied:
+        _git_cmd(target_repo, "tag", "-f", "baseline", "HEAD")
+
+    return {
+        "strategy": "cherry_pick",
+        "applied": applied,
+        "conflicts": conflicts,
+        "new_head": _git_head(target_repo),
+        "backup": str(backup_dir),
+    }
+
+
+def merge_branch_and_continue(
+    paths: RepoPaths, variant_id: str,
+) -> dict[str, Any]:
+    """Promote winning researcher variant's target clone to become canonical.
+
+    Moves the clone to the canonical location. Fast but destructive — the old
+    canonical is backed up (moved, not deleted).
+    """
+    from harness_core.git_utils import git_command as _git_cmd, git_head as _git_head
+
+    target_repo = _resolve_target_repo(paths.supervised_repo)
+    target_clone = Path(f"{target_repo}--{variant_id}")
+
+    if not target_clone.exists():
+        raise FileNotFoundError(f"Target clone not found: {target_clone}")
+
+    # Move canonical to backup
+    backup_path = Path(f"{target_repo}.pre-merge-backup")
+    if backup_path.exists():
+        import shutil as _shutil
+        _shutil.rmtree(backup_path)
+    target_repo.rename(backup_path)
+
+    # Move winner to canonical location
+    target_clone.rename(target_repo)
+
+    # Re-symlink .pixi (may point to old location)
+    pixi_link = target_repo / ".pixi"
+    if pixi_link.is_symlink():
+        pixi_link.unlink()
+    pixi_source = backup_path / ".pixi"
+    if pixi_source.exists() and not pixi_source.is_symlink():
+        pixi_link.symlink_to(pixi_source.resolve())
+
+    # Update baseline tag
+    _git_cmd(target_repo, "tag", "-f", "baseline", "HEAD")
+
+    return {
+        "strategy": "branch_and_continue",
+        "variant_id": variant_id,
+        "new_head": _git_head(target_repo),
+        "backup": str(backup_path),
+    }
+
+
+def rollback_merge(paths: RepoPaths) -> dict[str, Any]:
+    """Rollback the last merge by restoring from backup."""
+    target_repo = _resolve_target_repo(paths.supervised_repo)
+
+    # Check for code-state backup
+    backup_dir = paths.snapshots_dir / "pre-merge-backup"
+    if backup_dir.exists():
+        result = restore_code_state(target_repo, backup_dir)
+        return {"method": "restore", "result": result}
+
+    # Check for branch-and-continue backup (moved directory)
+    backup_path = Path(f"{target_repo}.pre-merge-backup")
+    if backup_path.exists():
+        import shutil as _shutil
+        if target_repo.exists():
+            _shutil.rmtree(target_repo)
+        backup_path.rename(target_repo)
+        return {"method": "move_back", "restored_from": str(backup_path)}
+
+    raise FileNotFoundError("No merge backup found. Nothing to rollback.")
 
 
 def list_researcher_variants(paths: RepoPaths) -> list[dict[str, Any]]:
