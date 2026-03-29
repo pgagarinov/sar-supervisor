@@ -34,6 +34,14 @@ These principles apply to ALL code, prompts, tests, and skills across ALL repos 
 
 The researcher handles ALL domain interaction. The supervisor handles researcher methodology.
 
+## Researcher Interaction — Skills Only
+
+**The researcher is called ONLY via `claude -p /start`.** The supervisor uses `pixi run loop` (which internally constructs `claude -p /start`) or `pixi run experiment start` — both go through the skill entry point. Never call direct commands in the researcher repo.
+
+Similarly, each layer in the chain calls its child only via skills:
+- Supervisor → researcher: `claude -p /start`
+- Researcher → target: `claude -p /run`
+
 ## Purpose
 
 This project is the **runtime plumbing** for an outer research loop that monitors, snapshots, and steers the inner researcher.
