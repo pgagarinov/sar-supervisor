@@ -15,6 +15,7 @@ from harness_core.prompt_editor import (
     list_assets as _list_assets,
     read_asset as _read_asset,
     edit_asset as _edit_asset,
+    sed_asset as _sed_asset,
     diff_text,
     edit_history as _edit_history,
     resolve_asset as _resolve_asset,
@@ -63,6 +64,25 @@ def edit_asset(
     )
 
 
+def sed_asset(
+    paths: RepoPaths,
+    name: str,
+    pattern: str,
+    *,
+    log_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Apply a sed-like substitution to an asset. Logged, diffed, auto-committed."""
+    return _sed_asset(
+        claude_dir=paths.claude_dir,
+        repo_path=paths.supervised_repo,
+        skill_name=paths.skill_name,
+        agent_names=list(paths.agent_names),
+        name=name,
+        pattern=pattern,
+        log_dir=log_dir or paths.state_dir,
+    )
+
+
 def edit_history(paths: RepoPaths, limit: int = 20) -> list[dict[str, Any]]:
     """Read recent prompt edit history."""
     return _edit_history(paths.state_dir, limit=limit)
@@ -73,6 +93,7 @@ __all__ = [
     "list_assets",
     "read_asset",
     "edit_asset",
+    "sed_asset",
     "diff_text",
     "edit_history",
 ]

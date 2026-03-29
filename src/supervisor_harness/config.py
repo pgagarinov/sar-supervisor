@@ -83,7 +83,7 @@ class RepoPaths:
         workspace_root: Path | None = None,
         supervised_repo: Path | None = None,
         log_path: Path | None = None,
-        experiment_id: str | None = None,
+        variant_id: str | None = None,
     ) -> "RepoPaths":
         workspace = (workspace_root or Path.cwd()).expanduser().resolve()
         config = load_harness_config(workspace)
@@ -131,10 +131,10 @@ class RepoPaths:
         # Log path
         log_cfg = config.get("log", {})
         log_template = log_cfg.get("path", "{tmp}/cc-{name}.log")
-        if experiment_id and not log_path:
+        if variant_id and not log_path:
             resolved_log = Path(
                 _resolve_path_template(log_template, project_name)
-                .replace(".log", f"--{experiment_id}.log")
+                .replace(".log", f"--{variant_id}.log")
             )
         else:
             resolved_log = log_path or Path(
@@ -143,8 +143,8 @@ class RepoPaths:
 
         state_dir = workspace / ".supervisor"
 
-        # When experiment_id is set, namespace PID and state paths
-        pid_name = f"{skill_name}--{experiment_id}" if experiment_id else skill_name
+        # When variant_id is set, namespace PID and state paths
+        pid_name = f"{skill_name}--{variant_id}" if variant_id else skill_name
 
         return cls(
             workspace_root=workspace,
@@ -193,8 +193,9 @@ def build_launch_spec(
     pixi_bin: str | None = None,
     config_dir: Path | None = None,
     enable_lsp_tool: bool = True,
-    experiment_id: str | None = None,
-    base_branch: str | None = None,
+    variant_id: str | None = None,
+    target_repo: Path | None = None,
+    canonical_target: Path | None = None,
 ) -> LaunchSpec:
     resolved_claude = claude_bin or shutil.which("claude") or "claude"
     resolved_pixi = pixi_bin or shutil.which("pixi") or "pixi"
@@ -217,10 +218,12 @@ def build_launch_spec(
     env_prefix += f"CLAUDE_CONFIG_DIR={shlex.quote(str(resolved_config_dir))} "
     env_prefix += f"CLAUDE_CONFIG_DIRS={shlex.quote(config_dirs_str)} "
     env_prefix += f"TARGET_CLAUDE_CONFIG_DIR={shlex.quote(str(target_config_dir))} "
-    if experiment_id:
-        env_prefix += f"EXPERIMENT_ID={shlex.quote(experiment_id)} "
-    if base_branch:
-        env_prefix += f"BASE_BRANCH={shlex.quote(base_branch)} "
+    if variant_id:
+        env_prefix += f"RV_ID={shlex.quote(variant_id)} "
+    if target_repo:
+        env_prefix += f"TARGET_REPO={shlex.quote(str(target_repo))} "
+    if canonical_target:
+        env_prefix += f"CANONICAL_TARGET={shlex.quote(str(canonical_target))} "
 
     command = (
         f"{cleared_pixi_env} && "

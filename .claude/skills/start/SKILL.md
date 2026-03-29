@@ -8,7 +8,7 @@ user_invocable: true
 
 Start the inner research loop and begin active supervision. You are the outer researcher — your job is to make the inner researcher better at researching.
 
-## SINGLE EXPERIMENT MODE (default)
+## SINGLE VARIANT MODE (default)
 
 ### 1. Pre-flight
 
@@ -40,7 +40,7 @@ On each stop hook cycle:
 
 If stalled:
 1. Read the researcher's current prompts: `pixi run researcher-dot-claude-read skill`, `pixi run researcher-dot-claude-read evaluator`, `pixi run researcher-dot-claude-read improver`
-2. Analyze what the researcher is doing wrong (bad experiment discipline, not pivoting, repeating failed approaches, etc.)
+2. Analyze what the researcher is doing wrong (bad iteration discipline, not pivoting, repeating failed approaches, etc.)
 3. Edit prompts: `echo "new content" | pixi run researcher-dot-claude-edit <name>`
 4. Restart: `pixi run researcher-stop && pixi run researcher-loop --no-clean`
 
@@ -52,21 +52,21 @@ Analyze results:
 
 Decide: restart with same prompts, edit prompts and restart, or report success.
 
-## PARALLEL EXPERIMENT MODE
+## PARALLEL VARIANT MODE
 
 Use when testing multiple researcher SKILL.md variants simultaneously.
 
 ### Setup
 
-1. Create variants in `experiments/variants/` (each is a complete SKILL.md for the researcher)
+1. Create variants in `researcher_variants/` (each is a complete SKILL.md for the researcher)
 2. For each variant:
    ```bash
-   cat experiments/variants/X.md | pixi run researcher-dot-claude-edit skill
-   pixi run researcher-experiment start --id exp-X
+   cat researcher_variants/X.md | pixi run researcher-dot-claude-edit skill
+   pixi run researcher-variant start --id rv-X
    ```
-3. Monitor all: `pixi run researcher-experiment list`
-4. Compare: `pixi run researcher-experiment compare`
-5. Select winner, stop losers: `pixi run researcher-experiment stop --id exp-X`
+3. Monitor all: `pixi run researcher-variant list`
+4. Compare: `pixi run researcher-variant compare`
+5. Select winner, stop losers: `pixi run researcher-variant stop --id rv-X`
 6. Continue best variant as the main run
 
 ## What You Do NOT Do

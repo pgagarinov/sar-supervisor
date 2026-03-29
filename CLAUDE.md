@@ -36,7 +36,7 @@ The researcher handles ALL domain interaction. The supervisor handles researcher
 
 ## Researcher Interaction — Skills Only
 
-**The researcher is called ONLY via `claude -p /start`.** The supervisor uses `pixi run researcher-loop` (which internally constructs `claude -p /start`) or `pixi run researcher-experiment start` — both go through the skill entry point. Never call direct commands in the researcher repo.
+**The researcher is called ONLY via `claude -p /start`.** The supervisor uses `pixi run researcher-loop` (which internally constructs `claude -p /start`) or `pixi run researcher-variant start` — both go through the skill entry point. Never call direct commands in the researcher repo.
 
 Similarly, each layer in the chain calls its child only via skills:
 - Supervisor → researcher: `claude -p /start`
@@ -131,7 +131,7 @@ Every stop hook response MUST include:
 ### Stagnation Response Protocol
 
 - **Same metric for 3 checks**: Read the primary report. Categorize remaining errors. Form a hypothesis about WHY the current approach can't fix them.
-- **Same metric for 5 checks**: STOP the run. The current SKILL.md is not working for these issues. Design a new variant that targets the specific error patterns you identified. Write it to `experiments/variants/`. Apply it. Restart.
+- **Same metric for 5 checks**: STOP the run. The current SKILL.md is not working for these issues. Design a new variant that targets the specific error patterns you identified. Write it to `researcher_variants/`. Apply it. Restart.
 - **Same metric for 10+ checks**: Something is fundamentally wrong. Step back and rethink the entire approach. Consider whether the remaining issues need a different kind of agent, different model, or different workflow entirely.
 
 ### General Principles
@@ -140,7 +140,7 @@ Every stop hook response MUST include:
 - **Adapt the approach to the issue class.** Different bug types need different strategies. One skill design doesn't fit all.
 - **Protect accumulated progress.** Production code changes represent work. Always use `researcher-revert-safe` or `researcher-restore`, never raw git commands. ALWAYS use `--no-clean` when starting runs to preserve code state.
 - **The prompt assets are your lever.** SKILL.md, agent definitions, and rules are the only things you control. Everything else is downstream of how well those prompts work.
-- **Read your own history.** Check `pixi run researcher-dot-claude-history` and `.supervisor/history.jsonl` before making changes. Don't repeat failed experiments.
+- **Read your own history.** Check `pixi run researcher-dot-claude-history` and `.supervisor/history.jsonl` before making changes. Don't repeat failed approaches.
 
 ## How to Run the Researcher Loop
 
@@ -205,20 +205,20 @@ pixi run researcher-loop
 
 The metric is configured in `harness.toml` under `[reports.metric]`. It must improve over iterations. If it's not improving, the prompt assets need to be changed.
 
-## Experiment Framework
+## Variant Framework
 
-When the supervisor is unsure which skill design works best, it should **experiment** — run multiple variants and compare.
+When the supervisor is unsure which skill design works best, it should run multiple variants and compare.
 
 ### Variants
 
-Strategy variants are stored in `experiments/variants/`. Each is a complete SKILL.md. See `EXAMPLE-variant.md` for the skeleton.
+Strategy variants are stored in `researcher_variants/`. Each is a complete SKILL.md. See `EXAMPLE-variant.md` for the skeleton.
 
 ### Creating new variants
 
 When current approaches stall, the supervisor should:
 1. Analyze WHY (read snapshots, reports, prompt history)
 2. Hypothesize a structural change that addresses the root cause
-3. Write a new variant in `experiments/variants/`
+3. Write a new variant in `researcher_variants/`
 4. Run it and compare with the current best
 
 ## Karpathy Loop — Applied at Supervisor Level
@@ -240,10 +240,9 @@ The quality of prompt assets is the binding constraint on the quality of the aut
 sar-supervisor/                   # This project
   CLAUDE.md                       # This file
   harness.toml                    # Project configuration — edit this first
-  experiments/
-    variants/                     # SKILL.md strategy variants for A/B testing
-    run_experiment.sh             # Run a single variant with time budget
-    compare_experiments.py        # Compare results across variants
+  researcher_variants/            # SKILL.md strategy variants for A/B testing
+    run_variant.sh               # Run a single variant with time budget
+    compare_variants.py          # Compare results across variants
 
 <supervised-repo>/                # The supervised project (path in harness.toml)
   .claude/

@@ -458,109 +458,150 @@ def restart_run(
 # --- Experiment management ---
 
 
-def _generate_experiment_id(paths: RepoPaths, prefix: str = "exp") -> str:
-    """Generate a unique experiment ID with timestamp and random suffix."""
+def _generate_variant_id(paths: RepoPaths, prefix: str = "rv") -> str:
+    """Generate a unique researcher variant ID with timestamp and random suffix."""
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     suffix = secrets.token_hex(2)
-    exp_id = f"{prefix}-{ts}-{suffix}"
-    pid_path = paths.state_dir / f"{paths.skill_name}--{exp_id}.pid"
+    variant_id = f"{prefix}-{ts}-{suffix}"
+    pid_path = paths.state_dir / f"{paths.skill_name}--{variant_id}.pid"
     if pid_path.exists():
-        return _generate_experiment_id(paths, prefix)
-    return exp_id
+        return _generate_variant_id(paths, prefix)
+    return variant_id
 
 
-def _create_experiment_worktree(
-    supervised_repo: Path, experiment_id: str, base_branch: str | None = None,
+def _symlink_pixi(source_repo: Path, clone_path: Path) -> None:
+    """Symlink .pixi from source repo into a clone (read-only, safe to share)."""
+    pixi_dir = source_repo / ".pixi"
+    clone_pixi = clone_path / ".pixi"
+    if pixi_dir.exists() and not clone_pixi.exists():
+        clone_pixi.symlink_to(pixi_dir.resolve())
+
+
+def _resolve_target_repo(supervised_repo: Path) -> Path:
+    """Resolve the target repo absolute path from the researcher's .env."""
+    env_path = supervised_repo / ".env"
+    target_rel = "../sar-rag-target"
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("TARGET_PATH="):
+                target_rel = line.split("=", 1)[1].strip()
+                break
+    return (supervised_repo / target_rel).resolve()
+
+
+def _create_variant_clone(
+    supervised_repo: Path, variant_id: str,
 ) -> Path:
-    """Create an isolated worktree of the supervised repo for this experiment.
+    """Create an isolated clone of the supervised repo for this researcher variant.
 
-    Returns the worktree path.
+    Uses git clone --local (hardlinks) for fast, space-efficient, fully isolated copies.
+    Returns the clone path.
     """
-    worktree_path = Path(f"/tmp/sar-research-loop--{experiment_id}")
-    if worktree_path.exists():
-        return worktree_path
+    clone_path = Path(f"/tmp/sar-research-loop--{variant_id}")
+    if clone_path.exists():
+        return clone_path
 
-    branch_base = base_branch or "HEAD"
     subprocess.run(
-        ["git", "worktree", "add", str(worktree_path), "-b", experiment_id, branch_base],
-        cwd=supervised_repo,
+        ["git", "clone", "--local", str(supervised_repo), str(clone_path)],
         check=True,
         capture_output=True,
     )
-
-    # Symlink .pixi from the main repo so pixi env is shared
-    pixi_dir = supervised_repo / ".pixi"
-    worktree_pixi = worktree_path / ".pixi"
-    if pixi_dir.exists() and not worktree_pixi.exists():
-        worktree_pixi.symlink_to(pixi_dir.resolve())
-
-    return worktree_path
+    _symlink_pixi(supervised_repo, clone_path)
+    return clone_path
 
 
-def _remove_experiment_worktree(
-    supervised_repo: Path, experiment_id: str,
-) -> None:
-    """Remove an experiment's worktree and branch."""
-    worktree_path = Path(f"/tmp/sar-research-loop--{experiment_id}")
-    if worktree_path.exists():
-        subprocess.run(
-            ["git", "worktree", "remove", str(worktree_path), "--force"],
-            cwd=supervised_repo,
-            check=False,
-            capture_output=True,
-        )
-    # Clean up the branch
+def _create_target_clone(
+    target_repo: Path, variant_id: str,
+) -> Path:
+    """Create an isolated clone of the target repo for this researcher variant.
+
+    Returns the target clone path.
+    """
+    clone_path = Path(f"{target_repo}--{variant_id}")
+    if clone_path.exists():
+        return clone_path
+
     subprocess.run(
-        ["git", "branch", "-D", experiment_id],
-        cwd=supervised_repo,
-        check=False,
+        ["git", "clone", "--local", str(target_repo), str(clone_path)],
+        check=True,
         capture_output=True,
     )
+    _symlink_pixi(target_repo, clone_path)
+    return clone_path
 
 
-def start_experiment(
+def _remove_variant_clones(
+    supervised_repo: Path, target_repo: Path, variant_id: str,
+) -> None:
+    """Remove all clones and temp files for a researcher variant."""
+    import shutil as _shutil
+
+    # Researcher clone
+    researcher_clone = Path(f"/tmp/sar-research-loop--{variant_id}")
+    if researcher_clone.exists():
+        _shutil.rmtree(researcher_clone)
+
+    # Target clone (initial)
+    target_clone = Path(f"{target_repo}--{variant_id}")
+    if target_clone.exists():
+        _shutil.rmtree(target_clone)
+
+    # Additional target variant clones (tv-1, tv-2, etc.)
+    for tv_clone in target_repo.parent.glob(f"{target_repo.name}--{variant_id}-tv-*"):
+        _shutil.rmtree(tv_clone)
+
+    # Temp files (chroma, reports)
+    for chroma_dir in Path("/tmp").glob(f"fluxapi-chroma--{variant_id}*"):
+        _shutil.rmtree(chroma_dir)
+    for report_file in Path("/tmp").glob(f"rag-eval-report--{variant_id}*.json"):
+        report_file.unlink()
+
+
+def start_researcher_variant(
     paths: RepoPaths,
-    experiment_id: str | None = None,
+    variant_id: str | None = None,
     *,
     prompt: str | None = None,
     variant_path: Path | None = None,
-    base_branch: str | None = None,
     claude_bin: str | None = None,
     pixi_bin: str | None = None,
     config_dir: Path | None = None,
     clean_first: bool = True,
-    experiment_index: int = 0,
+    variant_index: int = 0,
 ) -> tuple[LaunchSpec, int, str]:
-    """Start an experiment with a unique ID in an isolated worktree.
+    """Start a researcher variant with a unique ID in an isolated clone.
 
-    Each experiment gets its own copy of the research-loop repo so
-    different SKILL.md variants don't collide.
+    Creates both a researcher clone and a target clone. Each variant gets
+    fully independent git repos (git clone --local, hardlinked objects).
 
-    Returns (launch_spec, pid, experiment_id).
+    Returns (launch_spec, pid, variant_id).
     """
-    exp_cfg = paths.config.get("experiments", {})
-    prefix = exp_cfg.get("id_prefix", "exp")
+    var_cfg = paths.config.get("variants", {})
+    prefix = var_cfg.get("id_prefix", "rv")
 
-    if experiment_id is None:
-        experiment_id = _generate_experiment_id(paths, prefix=prefix)
+    if variant_id is None:
+        variant_id = _generate_variant_id(paths, prefix=prefix)
 
-    # Create isolated worktree for this experiment
-    worktree_path = _create_experiment_worktree(
-        paths.supervised_repo, experiment_id, base_branch=base_branch,
-    )
+    # Create isolated researcher clone
+    researcher_clone = _create_variant_clone(paths.supervised_repo, variant_id)
 
-    # If a variant SKILL.md was provided, apply it to the worktree
+    # Create isolated target clone
+    target_repo = _resolve_target_repo(paths.supervised_repo)
+    target_clone = _create_target_clone(target_repo, variant_id)
+
+    # If a variant SKILL.md was provided, apply it to the clone
     if variant_path and variant_path.exists():
-        skill_dest = worktree_path / ".claude" / "skills" / paths.skill_name / "SKILL.md"
+        skill_dest = researcher_clone / ".claude" / "skills" / paths.skill_name / "SKILL.md"
         skill_dest.parent.mkdir(parents=True, exist_ok=True)
         import shutil as _shutil
         _shutil.copy2(variant_path, skill_dest)
 
-    # Discover paths namespaced to this experiment, pointing at the worktree
-    exp_paths = RepoPaths.discover(
+    # Discover paths namespaced to this variant, pointing at the clone
+    var_paths = RepoPaths.discover(
         workspace_root=paths.workspace_root,
-        supervised_repo=worktree_path,
-        experiment_id=experiment_id,
+        supervised_repo=researcher_clone,
+        variant_id=variant_id,
     )
 
     default_prompt = paths.config.get("supervised", {}).get(
@@ -569,28 +610,29 @@ def start_experiment(
     resolved_prompt = prompt or default_prompt
 
     if clean_first:
-        clean_temp_files(exp_paths, include_log=True)
+        clean_temp_files(var_paths, include_log=True)
 
     # Reset Haiku offset for fresh log analysis
-    haiku_offset = exp_paths.state_dir / "haiku-offset"
+    haiku_offset = var_paths.state_dir / "haiku-offset"
     if haiku_offset.exists():
         haiku_offset.unlink()
 
-    # Per-experiment profile rotation: each experiment gets a different profile
+    # Per-variant profile rotation
     if config_dir is None and len(paths.config_dirs) > 1:
         from .config import next_profile
-        config_dir = next_profile(paths.config_dirs, offset=1 + experiment_index)
+        config_dir = next_profile(paths.config_dirs, offset=1 + variant_index)
 
     launch_spec = build_launch_spec(
-        exp_paths,
+        var_paths,
         prompt=resolved_prompt,
         claude_bin=claude_bin,
         pixi_bin=pixi_bin,
         config_dir=config_dir,
-        experiment_id=experiment_id,
-        base_branch=base_branch,
+        variant_id=variant_id,
+        target_repo=target_clone,
+        canonical_target=target_repo,
     )
-    exp_paths.state_dir.mkdir(parents=True, exist_ok=True)
+    var_paths.state_dir.mkdir(parents=True, exist_ok=True)
     launch_spec.log_path.parent.mkdir(parents=True, exist_ok=True)
     with launch_spec.log_path.open("wb") as log_handle:
         process = subprocess.Popen(
@@ -600,45 +642,45 @@ def start_experiment(
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-    save_state(exp_paths, pid=process.pid, launch_spec=launch_spec)
-    return launch_spec, process.pid, experiment_id
+    save_state(var_paths, pid=process.pid, launch_spec=launch_spec)
+    return launch_spec, process.pid, variant_id
 
 
-def stop_experiment(paths: RepoPaths, experiment_id: str) -> bool:
-    """Stop a running experiment and clean up its worktree."""
-    worktree_path = Path(f"/tmp/sar-research-loop--{experiment_id}")
-    supervised = worktree_path if worktree_path.exists() else paths.supervised_repo
+def stop_researcher_variant(paths: RepoPaths, variant_id: str) -> bool:
+    """Stop a running researcher variant and clean up all its clones."""
+    researcher_clone = Path(f"/tmp/sar-research-loop--{variant_id}")
+    supervised = researcher_clone if researcher_clone.exists() else paths.supervised_repo
 
-    exp_paths = RepoPaths.discover(
+    var_paths = RepoPaths.discover(
         workspace_root=paths.workspace_root,
         supervised_repo=supervised,
-        experiment_id=experiment_id,
+        variant_id=variant_id,
     )
-    stopped = stop_run(exp_paths)
+    stopped = stop_run(var_paths)
 
-    # Clean up the worktree
-    _remove_experiment_worktree(paths.supervised_repo, experiment_id)
+    # Clean up all clones and temp files
+    target_repo = _resolve_target_repo(paths.supervised_repo)
+    _remove_variant_clones(paths.supervised_repo, target_repo, variant_id)
 
     return stopped
 
 
-def list_experiments(paths: RepoPaths) -> list[dict[str, Any]]:
-    """List all experiments (running and stopped) from PID files in .supervisor/."""
-    experiments: list[dict[str, Any]] = []
+def list_researcher_variants(paths: RepoPaths) -> list[dict[str, Any]]:
+    """List all researcher variants (running and stopped) from PID files."""
+    variants: list[dict[str, Any]] = []
     if not paths.state_dir.exists():
-        return experiments
+        return variants
 
     skill_name = paths.skill_name
     prefix = f"{skill_name}--"
     suffix = ".pid"
 
     for pid_file in sorted(paths.state_dir.glob(f"{prefix}*{suffix}")):
-        name = pid_file.stem  # e.g. "start--exp-20260328T120000-a1b2"
+        name = pid_file.stem
         if not name.startswith(prefix):
             continue
-        exp_id = name[len(prefix):]
+        var_id = name[len(prefix):]
 
-        # Read PID
         try:
             pid = int(pid_file.read_text(encoding="utf-8").strip())
         except (ValueError, OSError):
@@ -646,7 +688,6 @@ def list_experiments(paths: RepoPaths) -> list[dict[str, Any]]:
 
         running = bool(pid and process_running(pid))
 
-        # Read state
         state_file = paths.state_dir / f"{name}-state.json"
         state: dict[str, Any] | None = None
         if state_file.exists():
@@ -655,13 +696,14 @@ def list_experiments(paths: RepoPaths) -> list[dict[str, Any]]:
             except (json.JSONDecodeError, OSError):
                 pass
 
-        experiments.append({
-            "experiment_id": exp_id,
+        variants.append({
+            "variant_id": var_id,
             "pid": pid,
             "running": running,
             "started_at": state.get("started_at") if state else None,
             "prompt": state.get("prompt") if state else None,
             "log_path": state.get("log_path") if state else None,
+            "config_dir": state.get("config_dir") if state else None,
         })
 
-    return experiments
+    return variants

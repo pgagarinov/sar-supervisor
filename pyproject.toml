@@ -44,7 +44,7 @@ researcher-dot-claude-diff = { cmd = "PYTHONPATH=src python -m supervisor_harnes
 researcher-dot-claude-history = "PYTHONPATH=src python -m supervisor_harness.cli prompt-history"
 researcher-restore = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli restore", depends-on = [] }
 researcher-revert-safe = "PYTHONPATH=src python -m supervisor_harness.cli revert-safe"
-researcher-experiment = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli experiment", depends-on = [] }
+researcher-variant = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli variant", depends-on = [] }
 # Self management: <action> pattern
 clean = "PYTHONPATH=src python -m supervisor_harness.cli clean --include-log"
 

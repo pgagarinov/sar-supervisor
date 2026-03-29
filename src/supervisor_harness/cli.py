@@ -14,22 +14,23 @@ from .prompt_editor import (
     edit_history as prompt_edit_history,
     list_assets,
     read_asset,
+    sed_asset,
 )
 from .supervisor import (
     analyze_log,
     cleanup_state,
     clean_temp_files,
     extract_primary_metric,
-    list_experiments,
+    list_researcher_variants,
     process_running,
     read_pid,
     resolve_snapshot,
     restart_run,
     restore_code_state,
     safe_revert,
-    start_experiment,
+    start_researcher_variant,
     start_run,
-    stop_experiment,
+    stop_researcher_variant,
     stop_run,
     write_snapshot,
 )
@@ -40,7 +41,7 @@ def _paths_from_args(args: argparse.Namespace) -> RepoPaths:
         workspace_root=Path(args.workspace_root) if args.workspace_root else None,
         supervised_repo=Path(args.supervised_repo) if args.supervised_repo else None,
         log_path=Path(args.log_path) if args.log_path else None,
-        experiment_id=getattr(args, "experiment_id", None),
+        variant_id=getattr(args, "variant_id", None),
     )
 
 
@@ -426,11 +427,14 @@ def _cmd_prompt_read(args: argparse.Namespace) -> int:
 
 def _cmd_prompt_edit(args: argparse.Namespace) -> int:
     paths = _paths_from_args(args)
-    content = sys.stdin.read()
-    if not content:
-        print("error: no content on stdin", file=sys.stderr)
-        return 1
-    record = edit_asset(paths, args.name, content)
+    if getattr(args, "sed", None):
+        record = sed_asset(paths, args.name, args.sed)
+    else:
+        content = sys.stdin.read()
+        if not content:
+            print("error: no content on stdin", file=sys.stderr)
+            return 1
+        record = edit_asset(paths, args.name, content)
     if not record["changed"]:
         print(f"{args.name}: no changes")
         return 0
@@ -532,98 +536,98 @@ def _cmd_loop(args: argparse.Namespace) -> int:
         time.sleep(sleep_seconds)
 
 
-def _cmd_experiment_start(args: argparse.Namespace) -> int:
+def _cmd_variant_start(args: argparse.Namespace) -> int:
     paths = _paths_from_args(args)
-    experiment_id = getattr(args, "id", None)
+    variant_id = getattr(args, "id", None)
     base_branch = getattr(args, "base_branch", None)
     prompt = getattr(args, "prompt", None)
     config_dir = Path(args.config_dir) if getattr(args, "config_dir", None) else None
     variant_path = Path(args.variant) if getattr(args, "variant", None) else None
-    experiments = list_experiments(paths)
-    running_count = sum(1 for e in experiments if e["running"])
-    launch_spec, pid, exp_id = start_experiment(
+    variants = list_researcher_variants(paths)
+    running_count = sum(1 for var in variants if var["running"])
+    launch_spec, pid, var_id = start_researcher_variant(
         paths,
-        experiment_id=experiment_id,
+        variant_id=variant_id,
         prompt=prompt,
         variant_path=variant_path,
         base_branch=base_branch,
         config_dir=config_dir,
-        experiment_index=running_count,
+        variant_index=running_count,
     )
-    print(f"experiment_id: {exp_id}")
+    print(f"variant_id: {var_id}")
     print(f"pid: {pid}")
     print(f"log: {launch_spec.log_path}")
     print(f"prompt: {launch_spec.prompt}")
     return 0
 
 
-def _cmd_experiment_stop(args: argparse.Namespace) -> int:
+def _cmd_variant_stop(args: argparse.Namespace) -> int:
     paths = _paths_from_args(args)
-    stopped = stop_experiment(paths, args.id)
+    stopped = stop_researcher_variant(paths, args.id)
     print("stopped" if stopped else "not-running")
     return 0
 
 
-def _cmd_experiment_list(args: argparse.Namespace) -> int:
+def _cmd_variant_list(args: argparse.Namespace) -> int:
     paths = _paths_from_args(args)
-    experiments = list_experiments(paths)
-    if not experiments:
-        print("experiments: none")
+    variants = list_researcher_variants(paths)
+    if not variants:
+        print("variants: none")
         return 0
     if args.json:
-        print(json.dumps(experiments, indent=2))
+        print(json.dumps(variants, indent=2))
         return 0
-    for exp in experiments:
-        status = "running" if exp["running"] else "stopped"
-        ts = exp.get("started_at", "")[:19] if exp.get("started_at") else ""
-        print(f"  {exp['experiment_id']:<40s} {status:<10s} pid={exp['pid']}  {ts}")
+    for var in variants:
+        status = "running" if var["running"] else "stopped"
+        ts = var.get("started_at", "")[:19] if var.get("started_at") else ""
+        print(f"  {var['variant_id']:<40s} {status:<10s} pid={var['pid']}  {ts}")
     return 0
 
 
-def _cmd_experiment_compare(args: argparse.Namespace) -> int:
+def _cmd_variant_compare(args: argparse.Namespace) -> int:
     paths = _paths_from_args(args)
-    experiments = list_experiments(paths)
-    if not experiments:
-        print("No experiments found")
+    variants = list_researcher_variants(paths)
+    if not variants:
+        print("No variants found")
         return 0
 
-    # For each experiment, try to read its metric from the latest state
+    # For each variant, try to read its metric from the latest state
     rows: list[dict[str, Any]] = []
-    for exp in experiments:
-        exp_id = exp["experiment_id"]
-        exp_paths = RepoPaths.discover(
+    for var in variants:
+        var_id = var["variant_id"]
+        var_paths = RepoPaths.discover(
             workspace_root=paths.workspace_root,
             supervised_repo=paths.supervised_repo,
-            experiment_id=exp_id,
+            variant_id=var_id,
         )
-        state = load_state(exp_paths)
+        state = load_state(var_paths)
         metric = None
-        if exp_paths.log_path.exists():
+        if var_paths.log_path.exists():
             try:
-                report = analyze_log(exp_paths).to_dict()
+                report = analyze_log(var_paths).to_dict()
                 metric = extract_primary_metric(
-                    exp_paths, report.get("report_summaries", {})
+                    var_paths, report.get("report_summaries", {})
                 )
             except Exception:
                 pass
         rows.append({
-            "experiment_id": exp_id,
-            "running": exp["running"],
+            "variant_id": var_id,
+            "running": var["running"],
             "metric": metric,
-            "started_at": exp.get("started_at", ""),
+            "started_at": var.get("started_at", ""),
         })
 
     if args.json:
         print(json.dumps(rows, indent=2))
         return 0
 
-    print(f"{'Experiment':<45s} {'Status':<10s} {'Metric':>10s} {'Started'}")
+    print(f"{'Variant':<45s} {'Status':<10s} {'Metric':>10s} {'Started'}")
     print("-" * 85)
     for row in rows:
         status = "running" if row["running"] else "stopped"
         metric = str(row["metric"]) if row["metric"] is not None else "n/a"
         ts = row["started_at"][:19] if row["started_at"] else ""
-        print(f"{row['experiment_id']:<45s} {status:<10s} {metric:>10s} {ts}")
+        print(f"{row['variant_id']:<45s} {status:<10s} {metric:>10s} {ts}")
     return 0
 
 
@@ -709,6 +713,7 @@ def build_parser() -> argparse.ArgumentParser:
     prompt_edit_parser = subparsers.add_parser("prompt-edit", parents=[common])
     prompt_edit_parser.add_argument("name", help="Asset name to edit")
     prompt_edit_parser.add_argument("--json", action="store_true")
+    prompt_edit_parser.add_argument("--sed", default=None, help="Apply sed substitution: s/pattern/replacement/[g]")
     prompt_edit_parser.set_defaults(func=_cmd_prompt_edit)
 
     prompt_diff_parser = subparsers.add_parser("prompt-diff", parents=[common])
@@ -730,29 +735,29 @@ def build_parser() -> argparse.ArgumentParser:
     loop_parser.add_argument("--once", action="store_true")
     loop_parser.set_defaults(func=_cmd_loop)
 
-    # --- Experiment subcommands ---
-    experiment_parser = subparsers.add_parser("experiment", parents=[common])
-    exp_subparsers = experiment_parser.add_subparsers(dest="experiment_command", required=True)
+    # --- Variant subcommands ---
+    variant_parser = subparsers.add_parser("variant", parents=[common])
+    var_subparsers = variant_parser.add_subparsers(dest="variant_command", required=True)
 
-    exp_start = exp_subparsers.add_parser("start")
-    exp_start.add_argument("--id", default=None, help="Experiment ID (auto-generated if omitted)")
-    exp_start.add_argument("--prompt", default=None, help="Prompt override")
-    exp_start.add_argument("--variant", default=None, help="Path to variant SKILL.md to apply")
-    exp_start.add_argument("--base-branch", default=None, help="Branch to fork from (e.g. exp-001)")
-    exp_start.add_argument("--config-dir", default=None, help="Claude config dir override")
-    exp_start.set_defaults(func=_cmd_experiment_start)
+    var_start = var_subparsers.add_parser("start")
+    var_start.add_argument("--id", default=None, help="Variant ID (auto-generated if omitted)")
+    var_start.add_argument("--prompt", default=None, help="Prompt override")
+    var_start.add_argument("--variant", default=None, help="Path to variant SKILL.md to apply")
+    var_start.add_argument("--base-branch", default=None, help="Branch to fork from (e.g. exp-001)")
+    var_start.add_argument("--config-dir", default=None, help="Claude config dir override")
+    var_start.set_defaults(func=_cmd_variant_start)
 
-    exp_stop = exp_subparsers.add_parser("stop")
-    exp_stop.add_argument("--id", required=True, help="Experiment ID to stop")
-    exp_stop.set_defaults(func=_cmd_experiment_stop)
+    var_stop = var_subparsers.add_parser("stop")
+    var_stop.add_argument("--id", required=True, help="Variant ID to stop")
+    var_stop.set_defaults(func=_cmd_variant_stop)
 
-    exp_list = exp_subparsers.add_parser("list")
-    exp_list.add_argument("--json", action="store_true")
-    exp_list.set_defaults(func=_cmd_experiment_list)
+    var_list = var_subparsers.add_parser("list")
+    var_list.add_argument("--json", action="store_true")
+    var_list.set_defaults(func=_cmd_variant_list)
 
-    exp_compare = exp_subparsers.add_parser("compare")
-    exp_compare.add_argument("--json", action="store_true")
-    exp_compare.set_defaults(func=_cmd_experiment_compare)
+    var_compare = var_subparsers.add_parser("compare")
+    var_compare.add_argument("--json", action="store_true")
+    var_compare.set_defaults(func=_cmd_variant_compare)
 
     return parser
 

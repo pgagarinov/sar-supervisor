@@ -32,6 +32,6 @@ paths = ["src/", "tests/"]
 [stop_hook]
 sleep_seconds = 120
 
-[experiments]
+[variants]
 max_concurrent = 3
-id_prefix = "exp"
+id_prefix = "rv"

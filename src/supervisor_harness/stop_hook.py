@@ -297,7 +297,7 @@ def _action_guidance(
             )
         return (
             f"STALLED at {val} for {iterations} iterations. Current approach is definitively not working. "
-            "STOP the run. Analyze issue patterns. Write a new variant in experiments/variants/. "
+            "STOP the run. Analyze issue patterns. Write a new variant in researcher_variants/. "
             "The remaining issues likely need a fundamentally different strategy."
         )
     if direction == "improving":
