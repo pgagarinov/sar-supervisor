@@ -8,16 +8,16 @@ Instead, use the safe commands that auto-checkpoint before reverting:
 
 ```bash
 # Safe revert (checkpoints first, then reverts configured paths)
-pixi run revert-safe
+pixi run researcher-revert-safe
 
 # Full revert (checkpoints first, then reverts entire working tree)
-pixi run revert-safe --full
+pixi run researcher-revert-safe --full
 
 # Restore a previous best state
-pixi run restore best
+pixi run researcher-restore best
 
 # Restore a specific snapshot
-pixi run restore <snapshot-id>
+pixi run researcher-restore <snapshot-id>
 ```
 
 Every snapshot captures a `code-state/` directory with:

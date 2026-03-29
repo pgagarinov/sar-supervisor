@@ -529,6 +529,7 @@ def start_experiment(
     pixi_bin: str | None = None,
     config_dir: Path | None = None,
     clean_first: bool = True,
+    experiment_index: int = 0,
 ) -> tuple[LaunchSpec, int, str]:
     """Start an experiment with a unique ID in an isolated worktree.
 
@@ -574,6 +575,11 @@ def start_experiment(
     haiku_offset = exp_paths.state_dir / "haiku-offset"
     if haiku_offset.exists():
         haiku_offset.unlink()
+
+    # Per-experiment profile rotation: each experiment gets a different profile
+    if config_dir is None and len(paths.config_dirs) > 1:
+        from .config import next_profile
+        config_dir = next_profile(paths.config_dirs, offset=1 + experiment_index)
 
     launch_spec = build_launch_spec(
         exp_paths,

@@ -33,6 +33,29 @@ def _resolve_path_template(template: str, project_name: str) -> str:
     return template.replace("{tmp}", "/tmp").replace("{name}", project_name)
 
 
+def my_profile_index(config_dirs: tuple[Path, ...]) -> int:
+    """Find current profile's index in the list from CLAUDE_CONFIG_DIR env var."""
+    current = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    if not current:
+        return 0
+    current_path = Path(current).expanduser().resolve()
+    for i, d in enumerate(config_dirs):
+        if d.expanduser().resolve() == current_path:
+            return i
+    return 0
+
+
+def next_profile(config_dirs: tuple[Path, ...], *, offset: int = 1) -> Path:
+    """Return profile at (my_index + offset) % len.
+
+    Single-profile list always returns that profile (no rotation).
+    """
+    if len(config_dirs) <= 1:
+        return config_dirs[0]
+    base = my_profile_index(config_dirs)
+    return config_dirs[(base + offset) % len(config_dirs)]
+
+
 @dataclass(slots=True, frozen=True)
 class RepoPaths:
     workspace_root: Path
@@ -179,10 +202,9 @@ def build_launch_spec(
         "default_prompt", "/default"
     )
     resolved_prompt = prompt or default_prompt
-    default_config_dir = (
-        paths.config_dirs[0] if paths.config_dirs else Path("~/.claude").expanduser()
-    )
-    resolved_config_dir = (config_dir or default_config_dir).expanduser()
+    resolved_config_dir = (config_dir or next_profile(paths.config_dirs, offset=1)).expanduser()
+    target_config_dir = next_profile(paths.config_dirs, offset=2).expanduser()
+    config_dirs_str = os.environ.get("CLAUDE_CONFIG_DIRS", "")
     cleared_pixi_env = (
         "unset PIXI_ENVIRONMENT_NAME PIXI_ENVIRONMENT_PLATFORMS PIXI_EXE "
         "PIXI_IN_SHELL PIXI_PROJECT_MANIFEST PIXI_PROJECT_NAME "
@@ -193,6 +215,8 @@ def build_launch_spec(
     if enable_lsp_tool:
         env_prefix += "ENABLE_LSP_TOOL=1 "
     env_prefix += f"CLAUDE_CONFIG_DIR={shlex.quote(str(resolved_config_dir))} "
+    env_prefix += f"CLAUDE_CONFIG_DIRS={shlex.quote(config_dirs_str)} "
+    env_prefix += f"TARGET_CLAUDE_CONFIG_DIR={shlex.quote(str(target_config_dir))} "
     if experiment_id:
         env_prefix += f"EXPERIMENT_ID={shlex.quote(experiment_id)} "
     if base_branch:
@@ -220,6 +244,12 @@ def build_launch_spec(
 def save_state(paths: RepoPaths, *, pid: int, launch_spec: LaunchSpec) -> None:
     paths.state_dir.mkdir(parents=True, exist_ok=True)
     paths.pid_path.write_text(f"{pid}\n", encoding="utf-8")
+    # Extract config_dir from launch command for state tracking
+    import re
+    config_dir_match = re.search(r"CLAUDE_CONFIG_DIR=(\S+)", launch_spec.command)
+    config_dir_used = (
+        config_dir_match.group(1).strip("'\"") if config_dir_match else None
+    )
     state = {
         "pid": pid,
         "prompt": launch_spec.prompt,
@@ -227,6 +257,7 @@ def save_state(paths: RepoPaths, *, pid: int, launch_spec: LaunchSpec) -> None:
         "cwd": str(launch_spec.cwd),
         "log_path": str(launch_spec.log_path),
         "started_at": datetime.now(timezone.utc).isoformat(),
+        "config_dir": config_dir_used,
     }
     paths.state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 

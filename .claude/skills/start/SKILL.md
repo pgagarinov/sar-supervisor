@@ -13,20 +13,20 @@ Start the inner research loop and begin active supervision. You are the outer re
 ### 1. Pre-flight
 
 ```bash
-pixi run status
+pixi run researcher-status
 ```
 If already running, report state and stop.
 
 Verify the supervised repo is accessible:
 ```bash
-pixi run prompt-list
+pixi run researcher-dot-claude-list
 ```
 PASS if it lists the expected skill and agents.
 
 ### 2. Start the loop
 
 ```bash
-pixi run loop --no-clean
+pixi run researcher-loop --no-clean
 ```
 
 This blocks while monitoring the researcher. The stop hook fires every ~120s with analysis. Act on the guidance: CONTINUE / INVESTIGATE / PIVOT.
@@ -39,16 +39,16 @@ On each stop hook cycle:
 - Make a decision and ACT (see CLAUDE.md for the mandatory thinking protocol)
 
 If stalled:
-1. Read the researcher's current prompts: `pixi run prompt-read skill`, `pixi run prompt-read evaluator`, `pixi run prompt-read improver`
+1. Read the researcher's current prompts: `pixi run researcher-dot-claude-read skill`, `pixi run researcher-dot-claude-read evaluator`, `pixi run researcher-dot-claude-read improver`
 2. Analyze what the researcher is doing wrong (bad experiment discipline, not pivoting, repeating failed approaches, etc.)
-3. Edit prompts: `echo "new content" | pixi run prompt-edit <name>`
-4. Restart: `pixi run stop && pixi run loop --no-clean`
+3. Edit prompts: `echo "new content" | pixi run researcher-dot-claude-edit <name>`
+4. Restart: `pixi run researcher-stop && pixi run researcher-loop --no-clean`
 
 ### 4. When the loop returns
 
 Analyze results:
-- `pixi run history` — metric progression
-- `pixi run prompt-history` — what prompt changes were made
+- `pixi run researcher-history` — metric progression
+- `pixi run researcher-dot-claude-history` — what prompt changes were made
 
 Decide: restart with same prompts, edit prompts and restart, or report success.
 
@@ -61,12 +61,12 @@ Use when testing multiple researcher SKILL.md variants simultaneously.
 1. Create variants in `experiments/variants/` (each is a complete SKILL.md for the researcher)
 2. For each variant:
    ```bash
-   cat experiments/variants/X.md | pixi run prompt-edit skill
-   pixi run experiment start --id exp-X
+   cat experiments/variants/X.md | pixi run researcher-dot-claude-edit skill
+   pixi run researcher-experiment start --id exp-X
    ```
-3. Monitor all: `pixi run experiment list`
-4. Compare: `pixi run experiment compare`
-5. Select winner, stop losers: `pixi run experiment stop --id exp-X`
+3. Monitor all: `pixi run researcher-experiment list`
+4. Compare: `pixi run researcher-experiment compare`
+5. Select winner, stop losers: `pixi run researcher-experiment stop --id exp-X`
 6. Continue best variant as the main run
 
 ## What You Do NOT Do

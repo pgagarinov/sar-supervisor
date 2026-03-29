@@ -36,7 +36,7 @@ The researcher handles ALL domain interaction. The supervisor handles researcher
 
 ## Researcher Interaction — Skills Only
 
-**The researcher is called ONLY via `claude -p /start`.** The supervisor uses `pixi run loop` (which internally constructs `claude -p /start`) or `pixi run experiment start` — both go through the skill entry point. Never call direct commands in the researcher repo.
+**The researcher is called ONLY via `claude -p /start`.** The supervisor uses `pixi run researcher-loop` (which internally constructs `claude -p /start`) or `pixi run researcher-experiment start` — both go through the skill entry point. Never call direct commands in the researcher repo.
 
 Similarly, each layer in the chain calls its child only via skills:
 - Supervisor → researcher: `claude -p /start`
@@ -87,7 +87,7 @@ The outer researcher AI agent is responsible for:
 - editing skill/agent definitions
 - deciding when to stop, restart, keep, or discard prompt changes
 
-**The outer researcher MUST NOT run any commands directly in the supervised repo.** No `cd <supervised-repo> && pytest`, no direct file reads. All interaction goes through the harness CLI (`pixi run ...`) or the `/edit-prompts` skill. See `.claude/rules/no-direct-supervised-repo.md`.
+**The outer researcher MUST NOT run any commands directly in the supervised repo.** No `cd <supervised-repo> && pytest`, no direct file reads. All interaction goes through the harness CLI (`pixi run researcher-...`) or the `/edit-prompts` skill. See `.claude/rules/no-direct-supervised-repo.md`.
 
 ## Autonomous Operation
 
@@ -138,9 +138,9 @@ Every stop hook response MUST include:
 
 - **Observe → Hypothesize → Edit → Test → Learn.** Each run is an experiment. Each prompt edit is a hypothesis. Track what you tried, what happened, and what you learned.
 - **Adapt the approach to the issue class.** Different bug types need different strategies. One skill design doesn't fit all.
-- **Protect accumulated progress.** Production code changes represent work. Always use `revert-safe` or `restore`, never raw git commands. ALWAYS use `--no-clean` when starting runs to preserve code state.
+- **Protect accumulated progress.** Production code changes represent work. Always use `researcher-revert-safe` or `researcher-restore`, never raw git commands. ALWAYS use `--no-clean` when starting runs to preserve code state.
 - **The prompt assets are your lever.** SKILL.md, agent definitions, and rules are the only things you control. Everything else is downstream of how well those prompts work.
-- **Read your own history.** Check `pixi run prompt-history` and `.supervisor/history.jsonl` before making changes. Don't repeat failed experiments.
+- **Read your own history.** Check `pixi run researcher-dot-claude-history` and `.supervisor/history.jsonl` before making changes. Don't repeat failed experiments.
 
 ## How to Run the Researcher Loop
 
@@ -149,7 +149,7 @@ Every stop hook response MUST include:
 The preferred runtime entrypoint:
 
 ```bash
-pixi run loop
+pixi run researcher-loop
 ```
 
 That command starts the inner worker if needed, monitors it, and archives snapshots when the observed state changes.
@@ -159,7 +159,7 @@ That command starts the inner worker if needed, monitors it, and archives snapsh
 Do NOT wait for completion. Poll every 30-120 seconds and capture the full context bundle:
 
 ```bash
-pixi run snapshot
+pixi run researcher-snapshot
 ```
 
 Each snapshot captures:
@@ -172,31 +172,31 @@ Each snapshot captures:
 
 ### 3. Detect deviations dynamically
 
-The stop hook includes Haiku-based log analysis that reads the raw stream-json and detects anti-patterns. Use this alongside `pixi run prompt-read <name>` to understand what the inner loop should be doing versus what it's actually doing.
+The stop hook includes Haiku-based log analysis that reads the raw stream-json and detects anti-patterns. Use this alongside `pixi run researcher-dot-claude-read <name>` to understand what the inner loop should be doing versus what it's actually doing.
 
 ### 4. On deviation: stop, fix, snapshot, restart
 
 ```bash
 # Stop the running process
-pixi run stop
+pixi run researcher-stop
 
 # Capture a final snapshot (includes code-state checkpoint)
-pixi run snapshot
+pixi run researcher-snapshot
 
 # Edit the skill/agent definitions (use /edit-prompts skill)
-# NEVER edit .claude files directly — use prompt-read/prompt-edit commands
+# NEVER edit .claude files directly — use researcher-dot-claude-read/researcher-dot-claude-edit commands
 
 # If you need to revert production code: ALWAYS use revert-safe
-pixi run revert-safe
+pixi run researcher-revert-safe
 
 # Or restore a previous best state:
-pixi run restore best
+pixi run researcher-restore best
 
 # Clean temp files
 pixi run clean
 
 # Restart
-pixi run loop
+pixi run researcher-loop
 ```
 
 **WARNING**: Accumulated production code changes represent hours of worker effort. Never discard them without checkpointing first. The `revert-safe` and `restore` commands handle this automatically.
@@ -252,11 +252,11 @@ sar-supervisor/                   # This project
     rules/*.md                    # Project rules (loaded by agents)
 ```
 
-Use `pixi run prompt-list` to discover the current prompt assets. Do not hardcode assumptions about their names or structure — read them dynamically.
+Use `pixi run researcher-dot-claude-list` to discover the current prompt assets. Do not hardcode assumptions about their names or structure — read them dynamically.
 
 ## Getting Started
 
 1. Clone this template
 2. Edit `harness.toml` with your supervised repo path, skill name, agent names, and report paths
 3. Edit this `CLAUDE.md` to describe your specific research objective
-4. Run `pixi run loop` to start the supervisor
+4. Run `pixi run researcher-loop` to start the supervisor

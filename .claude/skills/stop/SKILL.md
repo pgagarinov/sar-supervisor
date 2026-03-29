@@ -12,23 +12,23 @@ Gracefully stop the running research loop and capture the final state.
 
 1. **Check current status**:
    ```bash
-   pixi run status
+   pixi run researcher-status
    ```
    If not running, report and stop.
 
 2. **Capture a pre-stop snapshot**:
    ```bash
-   pixi run snapshot --label pre-stop
+   pixi run researcher-snapshot --label pre-stop
    ```
 
 3. **Stop the process**:
    ```bash
-   pixi run stop
+   pixi run researcher-stop
    ```
 
 4. **Capture final snapshot**:
    ```bash
-   pixi run snapshot --label final
+   pixi run researcher-snapshot --label final
    ```
 
 5. **Report final state**:
@@ -45,10 +45,10 @@ To restart with a modified approach:
 
 To revert the supervised repo's code:
 ```bash
-pixi run revert-safe
+pixi run researcher-revert-safe
 ```
 
 To restore a previous best state:
 ```bash
-pixi run restore best
+pixi run researcher-restore best
 ```

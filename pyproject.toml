@@ -26,24 +26,27 @@ sar-harness-core = { path = "../sar-harness-core", editable = true }
 dev = { features = ["dev"], solve-group = "default" }
 
 [tool.pixi.tasks]
-loop = "PYTHONPATH=src python -m supervisor_harness.cli loop"
-loop-once = "PYTHONPATH=src python -m supervisor_harness.cli loop --once"
-monitor = "PYTHONPATH=src python -m supervisor_harness.cli monitor --follow"
-watch-status = "PYTHONPATH=src python -m supervisor_harness.cli watch-status --interval-seconds 30"
-snapshot = "PYTHONPATH=src python -m supervisor_harness.cli snapshot"
-history = "PYTHONPATH=src python -m supervisor_harness.cli history --limit 20"
-status = "PYTHONPATH=src python -m supervisor_harness.cli status"
-stop = "PYTHONPATH=src python -m supervisor_harness.cli stop"
+# Researcher management (child): <child>-<action> pattern
+researcher-loop = "PYTHONPATH=src python -m supervisor_harness.cli loop"
+researcher-loop-once = "PYTHONPATH=src python -m supervisor_harness.cli loop --once"
+researcher-monitor = "PYTHONPATH=src python -m supervisor_harness.cli monitor --follow"
+researcher-watch-status = "PYTHONPATH=src python -m supervisor_harness.cli watch-status --interval-seconds 30"
+researcher-snapshot = "PYTHONPATH=src python -m supervisor_harness.cli snapshot"
+researcher-history = "PYTHONPATH=src python -m supervisor_harness.cli history --limit 20"
+researcher-status = "PYTHONPATH=src python -m supervisor_harness.cli status"
+researcher-stop = "PYTHONPATH=src python -m supervisor_harness.cli stop"
+researcher-start = "PYTHONPATH=src python -m supervisor_harness.cli start"
+researcher-restart = "PYTHONPATH=src python -m supervisor_harness.cli restart"
+researcher-dot-claude-list = "PYTHONPATH=src python -m supervisor_harness.cli prompt-list"
+researcher-dot-claude-read = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-read", depends-on = [] }
+researcher-dot-claude-edit = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-edit", depends-on = [] }
+researcher-dot-claude-diff = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-diff", depends-on = [] }
+researcher-dot-claude-history = "PYTHONPATH=src python -m supervisor_harness.cli prompt-history"
+researcher-restore = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli restore", depends-on = [] }
+researcher-revert-safe = "PYTHONPATH=src python -m supervisor_harness.cli revert-safe"
+researcher-experiment = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli experiment", depends-on = [] }
+# Self management: <action> pattern
 clean = "PYTHONPATH=src python -m supervisor_harness.cli clean --include-log"
-prompt-list = "PYTHONPATH=src python -m supervisor_harness.cli prompt-list"
-prompt-read = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-read", depends-on = [] }
-prompt-edit = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-edit", depends-on = [] }
-prompt-diff = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-diff", depends-on = [] }
-prompt-history = "PYTHONPATH=src python -m supervisor_harness.cli prompt-history"
-restore = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli restore", depends-on = [] }
-revert-safe = "PYTHONPATH=src python -m supervisor_harness.cli revert-safe"
-start = "PYTHONPATH=src python -m supervisor_harness.cli start"
-experiment = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli experiment", depends-on = [] }
 
 [tool.pixi.feature.dev.tasks]
 test = "PYTHONPATH=src python -m pytest tests/ -v"

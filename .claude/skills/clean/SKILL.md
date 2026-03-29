@@ -12,7 +12,7 @@ Remove all supervisor runtime state so the next `/start` begins fresh.
 
 1. Stop the inner loop if running:
    ```bash
-   pixi run stop
+   pixi run researcher-stop
    ```
 
 2. Clean supervisor state:

@@ -21,7 +21,7 @@ Every prompt asset change must be:
 
 ## Available Assets
 
-Use `pixi run prompt-list` to discover available assets. The asset names are derived from `harness.toml` configuration (skill name + agent names).
+Use `pixi run researcher-dot-claude-list` to discover available assets. The asset names are derived from `harness.toml` configuration (skill name + agent names).
 
 You can also use paths relative to `.claude/` (e.g., `rules/some-rule.md`).
 
@@ -29,24 +29,24 @@ You can also use paths relative to `.claude/` (e.g., `rules/some-rule.md`).
 
 ### List all assets
 ```bash
-pixi run prompt-list
-pixi run prompt-list --json
+pixi run researcher-dot-claude-list
+pixi run researcher-dot-claude-list --json
 ```
 
 ### Read an asset
 ```bash
-pixi run prompt-read skill
-pixi run prompt-read <agent-name>
+pixi run researcher-dot-claude-read skill
+pixi run researcher-dot-claude-read <agent-name>
 ```
 Or use the CLI directly and read the output.
 
 ### Edit an asset
 To edit, you must:
-1. Read the current content with `prompt-read`
+1. Read the current content with `researcher-dot-claude-read`
 2. Prepare the new content
-3. Pipe it to `prompt-edit`:
+3. Pipe it to `researcher-dot-claude-edit`:
 ```bash
-echo "new content" | pixi run prompt-edit skill
+echo "new content" | pixi run researcher-dot-claude-edit skill
 ```
 
 In practice as Claude Code, the workflow is:
@@ -56,19 +56,19 @@ In practice as Claude Code, the workflow is:
 
 ### Diff without writing
 ```bash
-echo "proposed content" | pixi run prompt-diff skill
+echo "proposed content" | pixi run researcher-dot-claude-diff skill
 ```
 
 ### View edit history
 ```bash
-pixi run prompt-history
-pixi run prompt-history --json
+pixi run researcher-dot-claude-history
+pixi run researcher-dot-claude-history --json
 ```
 
 ## Workflow for Prompt Changes
 
-1. **Always snapshot first**: `pixi run snapshot --label before-edit`
+1. **Always snapshot first**: `pixi run researcher-snapshot --label before-edit`
 2. **Read** the asset you want to change
 3. **Edit** with the new content — review the diff output
-4. **Snapshot after**: `pixi run snapshot --label after-edit`
-5. **Restart** the loop: `pixi run loop`
+4. **Snapshot after**: `pixi run researcher-snapshot --label after-edit`
+5. **Restart** the loop: `pixi run researcher-loop`

@@ -54,7 +54,7 @@ echo ""
 
 # 1. Apply the variant SKILL.md
 echo "--- Applying variant SKILL.md ---"
-cat "$VARIANT_FILE" | pixi run prompt-edit skill
+cat "$VARIANT_FILE" | pixi run researcher-dot-claude-edit skill
 echo ""
 
 # 2. Clean temp files
@@ -68,10 +68,10 @@ EXP_ARGS=""
 [ -n "$BASE_BRANCH" ] && EXP_ARGS="$EXP_ARGS --base-branch $BASE_BRANCH"
 
 if [ -n "$EXP_ARGS" ]; then
-    pixi run experiment start --no-clean $EXP_ARGS &
+    pixi run researcher-experiment start --no-clean $EXP_ARGS &
     LOOP_PID=$!
 else
-    pixi run start --no-clean &
+    pixi run researcher-start --no-clean &
     LOOP_PID=$!
 fi
 sleep 10
@@ -88,7 +88,7 @@ while [ $ELAPSED -lt $SECONDS_BUDGET ]; do
     REMAINING=$(( (SECONDS_BUDGET - ELAPSED) / 60 ))
 
     # Check if still running
-    if ! pixi run status 2>&1 | grep -q "running: True"; then
+    if ! pixi run researcher-status 2>&1 | grep -q "running: True"; then
         echo "    Inner loop stopped on its own at ${ELAPSED}s"
         break
     fi
@@ -100,19 +100,19 @@ done
 echo ""
 echo "--- Stopping inner loop ---"
 if [ -n "$EXPERIMENT_ID" ]; then
-    pixi run experiment stop --id "$EXPERIMENT_ID" || true
+    pixi run researcher-experiment stop --id "$EXPERIMENT_ID" || true
 else
-    pixi run stop || true
+    pixi run researcher-stop || true
 fi
 
 # 6. Capture snapshot
 echo "--- Capturing snapshot ---"
-SNAPSHOT=$(pixi run snapshot --label "exp-${VARIANT_NAME}")
+SNAPSHOT=$(pixi run researcher-snapshot --label "exp-${VARIANT_NAME}")
 echo "    Snapshot: $SNAPSHOT"
 
 # 7. Report results
 echo ""
 echo "=== Results: $VARIANT_NAME ==="
-echo "    Check: pixi run history --limit 1"
+echo "    Check: pixi run researcher-history --limit 1"
 echo ""
 echo "Done. Snapshot at: $SNAPSHOT"

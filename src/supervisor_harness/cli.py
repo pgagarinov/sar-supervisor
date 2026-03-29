@@ -337,6 +337,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
     if state:
         print(f"prompt: {state.get('prompt')}")
         print(f"log: {state.get('log_path')}")
+        if state.get("config_dir"):
+            print(f"profile: {state['config_dir']}")
     return 0
 
 
@@ -363,7 +365,26 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     if not args.no_checkpoint:
         checkpoint = write_snapshot(paths, label="pre-restore")
         print(f"checkpoint: {checkpoint}")
-    result = restore_code_state(paths, snapshot_dir)
+    try:
+        result = restore_code_state(paths.supervised_repo, snapshot_dir)
+    except ValueError as exc:
+        if "HEAD mismatch" not in str(exc):
+            raise
+        # HEAD differs from snapshot — reset to the snapshot's commit first
+        snap = json.loads((snapshot_dir / "snapshot.json").read_text(encoding="utf-8"))
+        snap_head = snap.get("code_state", {}).get("head")
+        if not snap_head:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        import subprocess
+        print(f"HEAD mismatch — resetting to snapshot HEAD {snap_head[:12]}")
+        subprocess.run(
+            ["git", "reset", "--hard", snap_head],
+            cwd=paths.supervised_repo,
+            check=True,
+            capture_output=True,
+        )
+        result = restore_code_state(paths.supervised_repo, snapshot_dir)
     print(f"tracked_applied: {result['tracked_applied']}")
     print(f"untracked_extracted: {result['untracked_extracted']}")
     if result.get("tracked_error"):
@@ -518,6 +539,8 @@ def _cmd_experiment_start(args: argparse.Namespace) -> int:
     prompt = getattr(args, "prompt", None)
     config_dir = Path(args.config_dir) if getattr(args, "config_dir", None) else None
     variant_path = Path(args.variant) if getattr(args, "variant", None) else None
+    experiments = list_experiments(paths)
+    running_count = sum(1 for e in experiments if e["running"])
     launch_spec, pid, exp_id = start_experiment(
         paths,
         experiment_id=experiment_id,
@@ -525,6 +548,7 @@ def _cmd_experiment_start(args: argparse.Namespace) -> int:
         variant_path=variant_path,
         base_branch=base_branch,
         config_dir=config_dir,
+        experiment_index=running_count,
     )
     print(f"experiment_id: {exp_id}")
     print(f"pid: {pid}")

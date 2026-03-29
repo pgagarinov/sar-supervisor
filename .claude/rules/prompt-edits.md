@@ -11,8 +11,8 @@ Instead, use the `/edit-prompts` skill which:
 - Tracks sha1 hashes before and after
 
 The CLI commands are:
-- `prompt-list` — list all assets (use this to discover available names)
-- `prompt-read <name>` — read an asset
-- `prompt-edit <name>` — edit an asset (new content on stdin)
-- `prompt-diff <name>` — diff proposed content without writing
-- `prompt-history` — view edit log
+- `dot-claude-list` — list all assets (use this to discover available names)
+- `dot-claude-read <name>` — read an asset
+- `dot-claude-edit <name>` — edit an asset (new content on stdin)
+- `dot-claude-diff <name>` — diff proposed content without writing
+- `dot-claude-history` — view edit log

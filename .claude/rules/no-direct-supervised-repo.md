@@ -11,27 +11,27 @@ Instead, use the harness CLI from the workspace root:
 
 ```bash
 # Start/stop the inner worker
-pixi run loop
-pixi run stop
+pixi run researcher-loop
+pixi run researcher-stop
 
 # Monitor progress
-pixi run status
-pixi run monitor
-pixi run watch-status
+pixi run researcher-status
+pixi run researcher-monitor
+pixi run researcher-watch-status
 
 # Capture state (includes reports, git status, code-state)
-pixi run snapshot
+pixi run researcher-snapshot
 
 # View history
-pixi run history
+pixi run researcher-history
 
 # Edit .claude prompt assets
-/edit-prompts   # or: pixi run prompt-read/prompt-edit/prompt-diff
+/edit-prompts   # or: pixi run researcher-dot-claude-read/researcher-dot-claude-edit/researcher-dot-claude-diff
 
 # Code state management
-pixi run revert-safe
-pixi run restore best
-pixi run restore <snapshot-id>
+pixi run researcher-revert-safe
+pixi run researcher-restore best
+pixi run researcher-restore <snapshot-id>
 ```
 
 If you need report data, read it from snapshots or the report paths configured in `harness.toml` — never run commands in the supervised repo yourself.
