@@ -27,6 +27,18 @@ When running parallel researcher variants, each produces target improvements in 
 
 Always park first. A running researcher variant may have uncommitted target changes, in-progress evaluations, or inconsistent state.
 
+## Command Reference
+
+| Command | Purpose |
+|---------|----------|
+| `researcher-variant park --id rv-X` | Stop process, preserve target clone, snapshot metrics |
+| `researcher-variant parked` | List all parked researcher variants with metrics |
+| `researcher-variant merge --id rv-X --strategy winner-takes-all` | Apply winner to canonical |
+| `researcher-variant merge --id rv-X,rv-Y --strategy cherry-pick` | Pick commits from multiple |
+| `researcher-variant merge --id rv-X --strategy branch-and-continue` | Promote clone to canonical |
+| `researcher-variant rollback` | Undo last merge from backup |
+| `researcher-variant discard --id rv-X` | Destroy all clones and temp files |
+
 ## Rollback
 
 Every merge creates a backup. `pixi run researcher-variant rollback` restores the canonical target to its pre-merge state. This works for all three strategies.
