@@ -207,13 +207,39 @@ The metric is configured in `harness.toml` under `[reports.metric]`. It must imp
 
 ## Variant Framework
 
-When the supervisor is unsure which skill design works best, it should run multiple variants and compare.
+When the supervisor runs multiple researcher variants:
 
-### Variants
+### Available Commands
+- `pixi run researcher-variant start --id rv-X --variant researcher_variants/X.md`
+- `pixi run researcher-variant list` — show all running/stopped researcher variants
+- `pixi run researcher-variant park --id rv-X` — stop + preserve target clone for merge
+- `pixi run researcher-variant parked` — list parked researcher variants with metrics
+- `pixi run researcher-variant compare` — compare metrics across researcher variants
+- `pixi run researcher-variant merge --id rv-X --strategy winner-takes-all|cherry-pick|branch-and-continue`
+- `pixi run researcher-variant rollback` — undo last merge
+- `pixi run researcher-variant discard --id rv-X` — destroy all clones
 
-Strategy variants are stored in `researcher_variants/`. Each is a complete SKILL.md. See `EXAMPLE-variant.md` for the skeleton.
+### Lifecycle: RUN → PARK → MERGE or DISCARD
+1. Start researcher variants (each gets an isolated clone of research-loop + target)
+2. Let them run until sufficient data
+3. Park all researcher variants (stop process, preserve target clone)
+4. Compare metrics and decide winner
+5. Merge winner to canonical target
+6. Verify merged target metrics
+7. Discard losers
+
+### Isolation
+Each researcher variant gets fully independent clones (git clone --local, hardlinks):
+- Researcher clone: /tmp/sar-research-loop--{rv_id}/
+- Target clone: sar-rag-target--{rv_id}/
+Concurrent git operations never conflict.
+
+### Profile Rotation
+Each researcher variant gets a different CLAUDE_CONFIG_DIR via next_profile(offset=1+variant_index).
 
 ### Creating new variants
+
+Strategy variants are stored in `researcher_variants/`. Each is a complete SKILL.md. See `EXAMPLE-variant.md` for the skeleton.
 
 When current approaches stall, the supervisor should:
 1. Analyze WHY (read snapshots, reports, prompt history)

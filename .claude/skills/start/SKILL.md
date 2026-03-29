@@ -56,18 +56,22 @@ Decide: restart with same prompts, edit prompts and restart, or report success.
 
 Use when testing multiple researcher SKILL.md variants simultaneously.
 
-### Setup
+### Full Workflow
 
-1. Create variants in `researcher_variants/` (each is a complete SKILL.md for the researcher)
-2. For each variant:
+1. Create researcher variants in `researcher_variants/`
+2. For each:
    ```bash
    cat researcher_variants/X.md | pixi run researcher-dot-claude-edit skill
    pixi run researcher-variant start --id rv-X
    ```
-3. Monitor all: `pixi run researcher-variant list`
+3. Monitor: `pixi run researcher-variant list`
 4. Compare: `pixi run researcher-variant compare`
-5. Select winner, stop losers: `pixi run researcher-variant stop --id rv-X`
-6. Continue best variant as the main run
+5. Park all: `pixi run researcher-variant park --id rv-X` (for each)
+6. Review parked: `pixi run researcher-variant parked`
+7. Merge winner: `pixi run researcher-variant merge --id rv-X --strategy winner-takes-all`
+8. Verify: run eval on canonical target
+9. If regression: `pixi run researcher-variant rollback`
+10. Discard losers: `pixi run researcher-variant discard --id rv-Y`
 
 ## What You Do NOT Do
 
