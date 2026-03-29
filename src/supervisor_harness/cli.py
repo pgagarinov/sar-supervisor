@@ -580,7 +580,9 @@ def _cmd_variant_list(args: argparse.Namespace) -> int:
     for var in variants:
         status = "running" if var["running"] else "stopped"
         ts = var.get("started_at", "")[:19] if var.get("started_at") else ""
-        print(f"  {var['variant_id']:<40s} {status:<10s} pid={var['pid']}  {ts}")
+        profile = var.get("config_dir", "")
+        profile_short = profile.split("/")[-1] if profile else "?"
+        print(f"  {var['variant_id']:<40s} {status:<10s} pid={var['pid']}  profile={profile_short}  {ts}")
     return 0
 
 
@@ -615,19 +617,22 @@ def _cmd_variant_compare(args: argparse.Namespace) -> int:
             "running": var["running"],
             "metric": metric,
             "started_at": var.get("started_at", ""),
+            "config_dir": state.get("config_dir", "") if state else "",
         })
 
     if args.json:
         print(json.dumps(rows, indent=2))
         return 0
 
-    print(f"{'Variant':<45s} {'Status':<10s} {'Metric':>10s} {'Started'}")
-    print("-" * 85)
+    print(f"{'Researcher Variant':<40s} {'Status':<10s} {'Profile':<20s} {'Metric':>10s} {'Started'}")
+    print("-" * 100)
     for row in rows:
         status = "running" if row["running"] else "stopped"
         metric = str(row["metric"]) if row["metric"] is not None else "n/a"
         ts = row["started_at"][:19] if row["started_at"] else ""
-        print(f"{row['variant_id']:<45s} {status:<10s} {metric:>10s} {ts}")
+        profile = row.get("config_dir", "")
+        profile_short = profile.split("/")[-1] if profile else "?"
+        print(f"{row['variant_id']:<40s} {status:<10s} {profile_short:<20s} {metric:>10s} {ts}")
     return 0
 
 
