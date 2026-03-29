@@ -22,7 +22,7 @@ import pytest
 
 pytestmark = [
     pytest.mark.e2e,
-    pytest.mark.timeout(900),  # 15 min per E2E test
+    pytest.mark.timeout(1800),  # 30 min per E2E test (researcher cycle takes 15-20 min)
     pytest.mark.xdist_group("e2e-serial"),  # E2E tests share real filesystem state — run on one worker
 ]
 
@@ -68,7 +68,7 @@ def _git(repo: Path, *args: str) -> str:
     return r.stdout.strip()
 
 
-def _wait_for_iterations(variant_id: str, min_iters: int = 1, timeout: int = 600) -> bool:
+def _wait_for_iterations(variant_id: str, min_iters: int = 1, timeout: int = 1200) -> bool:
     results_path = Path(f"/tmp/sar-research-loop--{variant_id}/results.tsv")
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -318,7 +318,7 @@ class TestVariantLifecycleE2E(unittest.TestCase):
         vid = "e2e-life-19"
         try:
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got, "Need at least 1 iteration")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             parked = json.loads((_SUPERVISOR_ROOT / ".supervisor" / f"parked-{vid}.json").read_text())
@@ -416,7 +416,7 @@ class TestMergeWTAE2E(unittest.TestCase):
         try:
             baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
@@ -431,7 +431,7 @@ class TestMergeWTAE2E(unittest.TestCase):
         vid = "e2e-wta-26"
         try:
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
@@ -446,7 +446,7 @@ class TestMergeWTAE2E(unittest.TestCase):
         vid = "e2e-wta-27"
         try:
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
@@ -467,7 +467,7 @@ class TestMergeCherryPickE2E(unittest.TestCase):
         try:
             baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             r = _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "cherry-pick")
@@ -483,7 +483,7 @@ class TestMergeCherryPickE2E(unittest.TestCase):
         try:
             old_baseline = _git(_RAG_TARGET, "rev-parse", "baseline")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             r = _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "cherry-pick")
@@ -503,7 +503,7 @@ class TestMergeBranchAndContinueE2E(unittest.TestCase):
         vid = "e2e-bc-31"
         try:
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             # Record variant's target HEAD
@@ -522,7 +522,7 @@ class TestMergeBranchAndContinueE2E(unittest.TestCase):
         vid = "e2e-bc-32"
         try:
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "branch-and-continue", timeout=120)
@@ -537,7 +537,7 @@ class TestMergeBranchAndContinueE2E(unittest.TestCase):
         vid = "e2e-bc-33"
         try:
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "branch-and-continue", timeout=120)
@@ -561,7 +561,7 @@ class TestRollbackE2E(unittest.TestCase):
         try:
             baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
@@ -577,7 +577,7 @@ class TestRollbackE2E(unittest.TestCase):
         try:
             baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "cherry-pick")
@@ -593,7 +593,7 @@ class TestRollbackE2E(unittest.TestCase):
         try:
             baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "branch-and-continue", timeout=120)
@@ -622,7 +622,7 @@ class TestMergeLockE2E(unittest.TestCase):
         vid = "e2e-lock-39"
         try:
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
@@ -734,7 +734,7 @@ class TestEdgeCasesE2E(unittest.TestCase):
         vid = "e2e-edge-53"
         try:
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            got = _wait_for_iterations(vid, 1, timeout=600)
+            got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
 
