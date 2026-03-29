@@ -778,6 +778,30 @@ def list_parked_variants(paths: RepoPaths) -> list[dict[str, Any]]:
     return parked
 
 
+class _MergeLock:
+    """Context manager for exclusive merge operations."""
+
+    def __init__(self, state_dir: Path) -> None:
+        self._lock_path = state_dir / "merge.lock"
+
+    def __enter__(self) -> "_MergeLock":
+        if self._lock_path.exists():
+            raise RuntimeError(
+                f"Another merge is in progress (lock: {self._lock_path}). "
+                "Wait for it to finish or remove the lock file manually."
+            )
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock_path.write_text(
+            json.dumps({"locked_at": datetime.now(timezone.utc).isoformat()}),
+            encoding="utf-8",
+        )
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._lock_path.exists():
+            self._lock_path.unlink()
+
+
 def merge_winner_takes_all(
     paths: RepoPaths, variant_id: str,
 ) -> dict[str, Any]:
@@ -797,21 +821,22 @@ def merge_winner_takes_all(
             f"Was the researcher variant parked (not discarded)?"
         )
 
-    # Backup canonical state
-    backup_dir = paths.snapshots_dir / "pre-merge-backup"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    backup_state = capture_code_state(target_repo, backup_dir)
+    with _MergeLock(paths.state_dir):
+        # Backup canonical state
+        backup_dir = paths.snapshots_dir / "pre-merge-backup"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_state = capture_code_state(target_repo, backup_dir)
 
-    # Fetch from winning clone and reset canonical
-    fetch_head = git_fetch(target_repo, target_clone, "main")
-    if not fetch_head:
-        raise RuntimeError(f"git fetch from {target_clone} failed")
+        # Fetch from winning clone and reset canonical
+        fetch_head = git_fetch(target_repo, target_clone, "main")
+        if not fetch_head:
+            raise RuntimeError(f"git fetch from {target_clone} failed")
 
-    from harness_core.git_utils import git_reset_hard, git_command as _git_cmd
-    git_reset_hard(target_repo, "FETCH_HEAD")
+        from harness_core.git_utils import git_reset_hard, git_command as _git_cmd
+        git_reset_hard(target_repo, "FETCH_HEAD")
 
-    # Update baseline tag
-    _git_cmd(target_repo, "tag", "-f", "baseline", "HEAD")
+        # Update baseline tag
+        _git_cmd(target_repo, "tag", "-f", "baseline", "HEAD")
 
     return {
         "strategy": "winner_takes_all",
@@ -839,46 +864,47 @@ def merge_cherry_pick(
 
     target_repo = _resolve_target_repo(paths.supervised_repo)
 
-    # Backup canonical state
-    backup_dir = paths.snapshots_dir / "pre-merge-backup"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    backup_state = capture_code_state(target_repo, backup_dir)
+    with _MergeLock(paths.state_dir):
+        # Backup canonical state
+        backup_dir = paths.snapshots_dir / "pre-merge-backup"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_state = capture_code_state(target_repo, backup_dir)
 
-    # Get baseline commit
-    baseline_result = _git_cmd(target_repo, "rev-parse", "baseline")
-    baseline_head = baseline_result.stdout.strip() if baseline_result.returncode == 0 else None
-    if not baseline_head:
-        raise RuntimeError("Could not resolve 'baseline' tag in canonical target")
+        # Get baseline commit
+        baseline_result = _git_cmd(target_repo, "rev-parse", "baseline")
+        baseline_head = baseline_result.stdout.strip() if baseline_result.returncode == 0 else None
+        if not baseline_head:
+            raise RuntimeError("Could not resolve 'baseline' tag in canonical target")
 
-    applied: list[dict[str, str]] = []
-    conflicts: list[dict[str, Any]] = []
+        applied: list[dict[str, str]] = []
+        conflicts: list[dict[str, Any]] = []
 
-    for variant_id in variant_ids:
-        target_clone = Path(f"{target_repo}--{variant_id}")
-        if not target_clone.exists():
-            continue
+        for variant_id in variant_ids:
+            target_clone = Path(f"{target_repo}--{variant_id}")
+            if not target_clone.exists():
+                continue
 
-        # Find commits since baseline in this variant's clone
-        commits = _log_range(target_clone, baseline_head, "HEAD")
+            # Find commits since baseline in this variant's clone
+            commits = _log_range(target_clone, baseline_head, "HEAD")
 
-        # Cherry-pick each (oldest first — reverse the list since git log is newest first)
-        for commit in reversed(commits):
-            result = _cherry_pick(target_repo, commit["hash"])
-            if result["conflicts"]:
-                conflicts.append({
-                    "variant_id": variant_id,
-                    "commit": commit,
-                })
-            else:
-                applied.append({
-                    "variant_id": variant_id,
-                    "hash": commit["hash"],
-                    "message": commit["message"],
-                })
+            # Cherry-pick each (oldest first — reverse the list since git log is newest first)
+            for commit in reversed(commits):
+                result = _cherry_pick(target_repo, commit["hash"])
+                if result["conflicts"]:
+                    conflicts.append({
+                        "variant_id": variant_id,
+                        "commit": commit,
+                    })
+                else:
+                    applied.append({
+                        "variant_id": variant_id,
+                        "hash": commit["hash"],
+                        "message": commit["message"],
+                    })
 
-    # Update baseline tag if anything was applied
-    if applied:
-        _git_cmd(target_repo, "tag", "-f", "baseline", "HEAD")
+        # Update baseline tag if anything was applied
+        if applied:
+            _git_cmd(target_repo, "tag", "-f", "baseline", "HEAD")
 
     return {
         "strategy": "cherry_pick",
@@ -905,26 +931,27 @@ def merge_branch_and_continue(
     if not target_clone.exists():
         raise FileNotFoundError(f"Target clone not found: {target_clone}")
 
-    # Move canonical to backup
-    backup_path = Path(f"{target_repo}.pre-merge-backup")
-    if backup_path.exists():
-        import shutil as _shutil
-        _shutil.rmtree(backup_path)
-    target_repo.rename(backup_path)
+    with _MergeLock(paths.state_dir):
+        # Move canonical to backup
+        backup_path = Path(f"{target_repo}.pre-merge-backup")
+        if backup_path.exists():
+            import shutil as _shutil
+            _shutil.rmtree(backup_path)
+        target_repo.rename(backup_path)
 
-    # Move winner to canonical location
-    target_clone.rename(target_repo)
+        # Move winner to canonical location
+        target_clone.rename(target_repo)
 
-    # Re-symlink .pixi (may point to old location)
-    pixi_link = target_repo / ".pixi"
-    if pixi_link.is_symlink():
-        pixi_link.unlink()
-    pixi_source = backup_path / ".pixi"
-    if pixi_source.exists() and not pixi_source.is_symlink():
-        pixi_link.symlink_to(pixi_source.resolve())
+        # Re-symlink .pixi (may point to old location)
+        pixi_link = target_repo / ".pixi"
+        if pixi_link.is_symlink():
+            pixi_link.unlink()
+        pixi_source = backup_path / ".pixi"
+        if pixi_source.exists() and not pixi_source.is_symlink():
+            pixi_link.symlink_to(pixi_source.resolve())
 
-    # Update baseline tag
-    _git_cmd(target_repo, "tag", "-f", "baseline", "HEAD")
+        # Update baseline tag
+        _git_cmd(target_repo, "tag", "-f", "baseline", "HEAD")
 
     return {
         "strategy": "branch_and_continue",
