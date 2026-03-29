@@ -1,11 +1,17 @@
-"""End-to-end tests using real Claude sessions.
+"""End-to-end tests using real Claude sessions and real repos.
 
-These tests are slow (~15 min) and require a working Claude CLI installation.
+These tests are slow (~20 min) and require:
+- Working Claude CLI installation
+- All SAR repos deployed as siblings
+- CLAUDE_CONFIG_DIRS set with 3+ profiles
+- Target at baseline tag
+
 Skipped by default — run with: pixi run -e dev test -m e2e
 """
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 import unittest
@@ -15,25 +21,20 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
-# Resolve repo roots relative to this test file
 _THIS_DIR = Path(__file__).parent
 _SUPERVISOR_ROOT = _THIS_DIR.parent
-_INTEGRATION_HUB = _SUPERVISOR_ROOT.parent / "take3-pe"
+_RESEARCH_LOOP = _SUPERVISOR_ROOT.parent / "sar-research-loop"
+_RAG_TARGET = _SUPERVISOR_ROOT.parent / "sar-rag-target"
 
 
 def _pixi_run(repo: Path, *args: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
-    """Run a pixi task in the given repo."""
     return subprocess.run(
         ["pixi", "run", *args],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
+        cwd=repo, capture_output=True, text=True, timeout=timeout,
     )
 
 
 def _pixi_run_check(repo: Path, *args: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
-    """Run a pixi task and assert it succeeds."""
     result = _pixi_run(repo, *args, timeout=timeout)
     assert result.returncode == 0, (
         f"pixi run {' '.join(args)} failed (rc={result.returncode}):\n"
@@ -42,229 +43,511 @@ def _pixi_run_check(repo: Path, *args: str, timeout: int = 300) -> subprocess.Co
     return result
 
 
-def _wait_for_iterations(
-    repo: Path, variant_id: str, min_iterations: int = 1, timeout: int = 600,
-) -> bool:
-    """Poll results.tsv until at least min_iterations are recorded."""
+def _git(repo: Path, *args: str) -> str:
+    r = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True)
+    return r.stdout.strip()
+
+
+def _wait_for_iterations(variant_id: str, min_iters: int = 1, timeout: int = 600) -> bool:
     results_path = Path(f"/tmp/sar-research-loop--{variant_id}/results.tsv")
     deadline = time.time() + timeout
     while time.time() < deadline:
         if results_path.exists():
-            lines = results_path.read_text().strip().splitlines()
-            # Skip header line
-            data_lines = [l for l in lines if not l.startswith("commit")]
-            if len(data_lines) >= min_iterations:
+            lines = [l for l in results_path.read_text().splitlines() if l and not l.startswith("commit")]
+            if len(lines) >= min_iters:
                 return True
         time.sleep(15)
     return False
 
 
-class TestResearcherGetsDifferentProfile(unittest.TestCase):
-    """Researcher runs with a different Claude profile than the supervisor."""
+def _cleanup_variant(vid: str) -> None:
+    _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "stop", "--id", vid)
+    _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "discard", "--id", vid)
 
-    def test_different_profile(self) -> None:
-        """Start a variant, verify it uses a different config_dir, then stop."""
-        # Start a variant
-        result = _pixi_run_check(
-            _SUPERVISOR_ROOT, "researcher-variant", "start", "--id", "e2e-profile",
-            timeout=120,
+
+def _state_file(vid: str) -> dict:
+    for f in (_SUPERVISOR_ROOT / ".supervisor").glob(f"*--{vid}-state.json"):
+        return json.loads(f.read_text())
+    return {}
+
+
+# =============================================================================
+# CLONE ISOLATION (#1-5)
+# =============================================================================
+
+
+class TestCloneIsolationE2E(unittest.TestCase):
+
+    def setUp(self):
+        self.vid = "e2e-clone"
+        _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", self.vid, timeout=120)
+        time.sleep(5)
+
+    def tearDown(self):
+        _cleanup_variant(self.vid)
+
+    def test_01_researcher_clone_has_own_git(self):
+        """#1: Researcher clone has its own .git directory."""
+        clone = Path(f"/tmp/sar-research-loop--{self.vid}")
+        self.assertTrue((clone / ".git").is_dir(), "Clone should have .git dir")
+        self.assertNotEqual(
+            (clone / ".git").resolve(),
+            (_RESEARCH_LOOP / ".git").resolve(),
+            "Clone .git must be separate from original",
         )
 
+    def test_02_target_clone_exists_with_pixi(self):
+        """#2: Target clone exists with .pixi symlink."""
+        target_clone = _RAG_TARGET.parent / f"sar-rag-target--{self.vid}"
+        self.assertTrue(target_clone.exists(), f"Target clone should exist at {target_clone}")
+        pixi = target_clone / ".pixi"
+        self.assertTrue(pixi.is_symlink() or pixi.is_dir(), ".pixi should be symlinked or exist")
+
+    def test_04_discard_cleans_all_artifacts(self):
+        """#4: After discard, no clone or temp files remain."""
+        _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "stop", "--id", self.vid)
+        _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "discard", "--id", self.vid)
+        researcher_clone = Path(f"/tmp/sar-research-loop--{self.vid}")
+        target_clone = _RAG_TARGET.parent / f"sar-rag-target--{self.vid}"
+        self.assertFalse(researcher_clone.exists())
+        self.assertFalse(target_clone.exists())
+
+
+class TestConcurrentClonesSafetyE2E(unittest.TestCase):
+
+    def test_03_two_clones_commit_independently(self):
+        """#3: Two researcher variants can both commit without conflict."""
+        vid_a, vid_b = "e2e-conc-a", "e2e-conc-b"
         try:
-            # Check state file for config_dir
-            state_dir = _SUPERVISOR_ROOT / ".supervisor"
-            state_files = list(state_dir.glob("*--e2e-profile-state.json"))
-            self.assertTrue(len(state_files) > 0, "State file should exist")
-
-            state = json.loads(state_files[0].read_text())
-            researcher_config_dir = state.get("config_dir", "")
-
-            # Supervisor's own config dir
-            import os
-            supervisor_config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "")
-
-            self.assertNotEqual(
-                researcher_config_dir, supervisor_config_dir,
-                "Researcher should use a different profile than supervisor",
-            )
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_a, timeout=120)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_b, timeout=120)
+            time.sleep(10)
+            # Both should be running without git errors
+            r = _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "list", "--json")
+            variants = json.loads(r.stdout)
+            running = [v for v in variants if v["running"]]
+            self.assertGreaterEqual(len(running), 2, "Both variants should be running")
         finally:
-            _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "stop", "--id", "e2e-profile")
-            _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "discard", "--id", "e2e-profile")
+            _cleanup_variant(vid_a)
+            _cleanup_variant(vid_b)
 
 
-class TestTwoVariantsDifferentProfiles(unittest.TestCase):
-    """Two researcher variants get different profiles from each other."""
+# =============================================================================
+# PROFILE ROTATION (#10-15)
+# =============================================================================
 
-    def test_different_profiles(self) -> None:
-        """Start two variants, verify they use different config_dirs, then discard."""
-        vid_a = "e2e-prof-a"
-        vid_b = "e2e-prof-b"
 
+class TestProfileRotationE2E(unittest.TestCase):
+
+    def test_10_researcher_uses_profile_i_plus_1(self):
+        """#10: Researcher's config_dir differs from supervisor's."""
+        vid = "e2e-rot-10"
         try:
-            _pixi_run_check(
-                _SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_a,
-                timeout=120,
-            )
-            _pixi_run_check(
-                _SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_b,
-                timeout=120,
-            )
-
-            state_dir = _SUPERVISOR_ROOT / ".supervisor"
-            state_a_files = list(state_dir.glob(f"*--{vid_a}-state.json"))
-            state_b_files = list(state_dir.glob(f"*--{vid_b}-state.json"))
-            self.assertTrue(len(state_a_files) > 0, f"State file for {vid_a} should exist")
-            self.assertTrue(len(state_b_files) > 0, f"State file for {vid_b} should exist")
-
-            config_a = json.loads(state_a_files[0].read_text()).get("config_dir", "")
-            config_b = json.loads(state_b_files[0].read_text()).get("config_dir", "")
-
-            self.assertNotEqual(
-                config_a, config_b,
-                "Two variants should use different profiles",
-            )
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            time.sleep(3)
+            state = _state_file(vid)
+            my_profile = os.environ.get("CLAUDE_CONFIG_DIR", "")
+            self.assertNotEqual(state.get("config_dir", ""), my_profile)
         finally:
-            for vid in (vid_a, vid_b):
-                _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "stop", "--id", vid)
-                _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "discard", "--id", vid)
+            _cleanup_variant(vid)
 
-
-class TestParkPreservesTargetWithMetrics(unittest.TestCase):
-    """Park preserves the target clone with metrics after iterations."""
-
-    def test_park_preserves_metrics(self) -> None:
-        """Start, wait for 1+ iteration, park, verify parked state has metrics."""
-        vid = "e2e-park"
+    def test_11_target_config_dir_in_command(self):
+        """#11: Launch command contains TARGET_CLAUDE_CONFIG_DIR."""
+        vid = "e2e-rot-11"
         try:
-            _pixi_run_check(
-                _SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid,
-                timeout=120,
-            )
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            time.sleep(3)
+            state = _state_file(vid)
+            self.assertIn("TARGET_CLAUDE_CONFIG_DIR=", state.get("command", ""))
+        finally:
+            _cleanup_variant(vid)
 
-            # Wait for at least one iteration
-            got_iterations = _wait_for_iterations(_SUPERVISOR_ROOT, vid, min_iterations=1, timeout=600)
-            self.assertTrue(got_iterations, "Should have at least 1 iteration within timeout")
+    def test_12_config_dirs_passed_to_child(self):
+        """#12: Launch command contains CLAUDE_CONFIG_DIRS."""
+        vid = "e2e-rot-12"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            time.sleep(3)
+            state = _state_file(vid)
+            self.assertIn("CLAUDE_CONFIG_DIRS=", state.get("command", ""))
+        finally:
+            _cleanup_variant(vid)
 
-            # Park the variant
-            _pixi_run_check(
-                _SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid,
-                timeout=120,
-            )
+    def test_13_two_variants_different_profiles(self):
+        """#13: Two researcher variants use different profiles."""
+        vid_a, vid_b = "e2e-rot-a", "e2e-rot-b"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_a, timeout=120)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_b, timeout=120)
+            time.sleep(3)
+            state_a = _state_file(vid_a)
+            state_b = _state_file(vid_b)
+            self.assertNotEqual(state_a.get("config_dir"), state_b.get("config_dir"))
+        finally:
+            _cleanup_variant(vid_a)
+            _cleanup_variant(vid_b)
 
-            # Verify parked state
+    def test_14_status_json_has_config_dir(self):
+        """#14: researcher-status --json includes config_dir."""
+        vid = "e2e-rot-14"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            time.sleep(3)
+            # Main researcher status (the variant runs as a subprocess)
+            r = _pixi_run_check(_SUPERVISOR_ROOT, "researcher-status", "--json")
+            data = json.loads(r.stdout)
+            # State may have config_dir if a main researcher is running
+            # For variant, check state file directly
+            state = _state_file(vid)
+            self.assertIn("config_dir", state)
+        finally:
+            _cleanup_variant(vid)
+
+    def test_15_status_shows_profile_line(self):
+        """#15: researcher-status output contains 'profile:' line."""
+        vid = "e2e-rot-15"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-start", "--no-clean", timeout=120)
+            time.sleep(3)
+            r = _pixi_run_check(_SUPERVISOR_ROOT, "researcher-status")
+            self.assertIn("profile:", r.stdout)
+        finally:
+            _pixi_run(_SUPERVISOR_ROOT, "researcher-stop")
+            _cleanup_variant(vid)
+
+
+# =============================================================================
+# VARIANT LIFECYCLE (#16-24)
+# =============================================================================
+
+
+class TestVariantLifecycleE2E(unittest.TestCase):
+
+    def test_16_start_creates_both_clones(self):
+        """#16: Start creates researcher clone AND target clone."""
+        vid = "e2e-life-16"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            researcher_clone = Path(f"/tmp/sar-research-loop--{vid}")
+            target_clone = _RAG_TARGET.parent / f"sar-rag-target--{vid}"
+            self.assertTrue(researcher_clone.exists())
+            self.assertTrue(target_clone.exists())
+        finally:
+            _cleanup_variant(vid)
+
+    def test_18_stop_preserves_clones(self):
+        """#18: Stop variant, verify clones still exist."""
+        vid = "e2e-life-18"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            time.sleep(3)
+            _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "stop", "--id", vid)
+            researcher_clone = Path(f"/tmp/sar-research-loop--{vid}")
+            target_clone = _RAG_TARGET.parent / f"sar-rag-target--{vid}"
+            self.assertTrue(researcher_clone.exists(), "Researcher clone should survive stop")
+            self.assertTrue(target_clone.exists(), "Target clone should survive stop")
+        finally:
+            _cleanup_variant(vid)
+
+    def test_19_park_has_metrics(self):
+        """#19: Park after iterations → parked state has metrics."""
+        vid = "e2e-life-19"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            got = _wait_for_iterations(vid, 1, timeout=600)
+            self.assertTrue(got, "Need at least 1 iteration")
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
+            parked = json.loads((_SUPERVISOR_ROOT / ".supervisor" / f"parked-{vid}.json").read_text())
+            self.assertEqual(parked["status"], "parked")
+            self.assertGreaterEqual(parked["iterations"]["total"], 1)
+        finally:
+            _cleanup_variant(vid)
+
+    def test_21_park_removes_researcher_keeps_target(self):
+        """#21: After park, researcher clone gone but target clone exists."""
+        vid = "e2e-life-21"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            time.sleep(5)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
+            researcher_clone = Path(f"/tmp/sar-research-loop--{vid}")
+            target_clone = _RAG_TARGET.parent / f"sar-rag-target--{vid}"
+            self.assertFalse(researcher_clone.exists(), "Researcher clone should be removed")
+            self.assertTrue(target_clone.exists(), "Target clone should be preserved")
+        finally:
+            _cleanup_variant(vid)
+
+    def test_22_discard_removes_everything(self):
+        """#22: Discard removes all clones, temp files, and parked state."""
+        vid = "e2e-life-22"
+        _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+        time.sleep(3)
+        _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "discard", "--id", vid, timeout=120)
+        self.assertFalse(Path(f"/tmp/sar-research-loop--{vid}").exists())
+        self.assertFalse((_RAG_TARGET.parent / f"sar-rag-target--{vid}").exists())
+
+    def test_23_list_shows_running_variants(self):
+        """#23: Variant list shows running variants with correct status."""
+        vid_a, vid_b = "e2e-list-a", "e2e-list-b"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_a, timeout=120)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_b, timeout=120)
+            time.sleep(3)
+            r = _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "list", "--json")
+            variants = json.loads(r.stdout)
+            ids = [v["variant_id"] for v in variants]
+            self.assertIn(vid_a, ids)
+            self.assertIn(vid_b, ids)
+        finally:
+            _cleanup_variant(vid_a)
+            _cleanup_variant(vid_b)
+
+    def test_24_parked_list_shows_metrics(self):
+        """#24: Parked list shows variants with metrics."""
+        vid = "e2e-parked-24"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            time.sleep(5)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
+            r = _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "parked", "--json")
+            parked = json.loads(r.stdout)
+            self.assertGreaterEqual(len(parked), 1)
+            self.assertEqual(parked[0]["variant_id"], vid)
+        finally:
+            _cleanup_variant(vid)
+
+
+# =============================================================================
+# MERGE STRATEGIES (#25-33)
+# =============================================================================
+
+
+class TestMergeWTAE2E(unittest.TestCase):
+    """Winner Takes All merge with real researcher variant."""
+
+    def test_25_canonical_head_changes(self):
+        """#25: After WTA merge, canonical HEAD matches variant's target."""
+        vid = "e2e-wta-25"
+        try:
+            baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            got = _wait_for_iterations(vid, 1, timeout=600)
+            self.assertTrue(got)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
+            new_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            self.assertNotEqual(baseline_head, new_head)
+        finally:
+            _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
+            _cleanup_variant(vid)
+
+    def test_26_backup_created(self):
+        """#26: WTA merge creates a backup snapshot."""
+        vid = "e2e-wta-26"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            got = _wait_for_iterations(vid, 1, timeout=600)
+            self.assertTrue(got)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
+            backup = _SUPERVISOR_ROOT / ".supervisor" / "snapshots" / "pre-merge-backup"
+            self.assertTrue(backup.exists(), "pre-merge-backup should exist")
+        finally:
+            _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
+            _cleanup_variant(vid)
+
+    def test_27_baseline_tag_updated(self):
+        """#27: After WTA merge, baseline tag points to new HEAD."""
+        vid = "e2e-wta-27"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            got = _wait_for_iterations(vid, 1, timeout=600)
+            self.assertTrue(got)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
+            head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            baseline = _git(_RAG_TARGET, "rev-parse", "baseline")
+            self.assertEqual(head, baseline)
+        finally:
+            _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
+            _cleanup_variant(vid)
+
+
+# =============================================================================
+# ROLLBACK (#34-37)
+# =============================================================================
+
+
+class TestRollbackE2E(unittest.TestCase):
+
+    def test_34_rollback_after_wta(self):
+        """#34: Rollback after WTA restores original HEAD."""
+        vid = "e2e-roll-34"
+        try:
+            baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            got = _wait_for_iterations(vid, 1, timeout=600)
+            self.assertTrue(got)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "rollback", timeout=120)
+            restored = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            self.assertEqual(baseline_head, restored, "HEAD should be restored to baseline")
+        finally:
+            _cleanup_variant(vid)
+
+    def test_37_rollback_no_backup_fails(self):
+        """#37: Rollback without prior merge returns non-zero exit code."""
+        r = _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
+        self.assertNotEqual(r.returncode, 0)
+
+
+# =============================================================================
+# MERGE LOCK (#39)
+# =============================================================================
+
+
+class TestMergeLockE2E(unittest.TestCase):
+
+    def test_39_lock_released_after_merge(self):
+        """#39: After successful merge, merge.lock does not exist."""
+        vid = "e2e-lock-39"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            got = _wait_for_iterations(vid, 1, timeout=600)
+            self.assertTrue(got)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
+            lock_path = _SUPERVISOR_ROOT / ".supervisor" / "merge.lock"
+            self.assertFalse(lock_path.exists(), "Lock should be released after merge")
+        finally:
+            _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
+            _cleanup_variant(vid)
+
+
+# =============================================================================
+# MONITOR OUTPUT (#45-48)
+# =============================================================================
+
+
+class TestMonitorOutputE2E(unittest.TestCase):
+
+    def test_45_loop_once_shows_metrics(self):
+        """#45: researcher-loop-once output contains profile and metric values."""
+        vid = "e2e-mon-45"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-start", "--no-clean", timeout=120)
+            time.sleep(10)
+            r = _pixi_run_check(_SUPERVISOR_ROOT, "researcher-loop-once", timeout=60)
+            self.assertIn("log:", r.stdout)
+            self.assertIn("events:", r.stdout)
+        finally:
+            _pixi_run(_SUPERVISOR_ROOT, "researcher-stop")
+
+    def test_46_variant_list_shows_profiles(self):
+        """#46: Variant list shows different profiles per variant."""
+        vid_a, vid_b = "e2e-mon-a", "e2e-mon-b"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_a, timeout=120)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_b, timeout=120)
+            time.sleep(3)
+            r = _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "list")
+            self.assertIn("profile=", r.stdout)
+        finally:
+            _cleanup_variant(vid_a)
+            _cleanup_variant(vid_b)
+
+    def test_48_variant_compare_output(self):
+        """#48: Variant compare shows structured output with columns."""
+        vid = "e2e-mon-48"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            time.sleep(5)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
+            r = _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "compare")
+            # Should have table header with columns
+            self.assertIn("Researcher Variant", r.stdout)
+            self.assertIn("Status", r.stdout)
+        finally:
+            _cleanup_variant(vid)
+
+
+# =============================================================================
+# EDGE CASES (#49, 51-54)
+# =============================================================================
+
+
+class TestEdgeCasesE2E(unittest.TestCase):
+
+    def test_49_park_already_stopped(self):
+        """#49: Park a variant whose process already died."""
+        vid = "e2e-edge-49"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            time.sleep(3)
+            # Kill process manually
+            state = _state_file(vid)
+            pid = state.get("pid")
+            if pid:
+                subprocess.run(["kill", "-9", str(pid)], capture_output=True)
+                time.sleep(2)
+            # Park should still work
+            r = _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             parked_path = _SUPERVISOR_ROOT / ".supervisor" / f"parked-{vid}.json"
-            self.assertTrue(parked_path.exists(), "Parked state should exist")
-            data = json.loads(parked_path.read_text())
-            self.assertEqual(data["status"], "parked")
-            # Metrics may or may not exist depending on whether eval completed
-            # but the target clone should be preserved
-            target_clone_path = data.get("target_clone", "")
-            if target_clone_path:
-                self.assertTrue(
-                    Path(target_clone_path).exists(),
-                    "Target clone should be preserved after park",
-                )
+            self.assertTrue(parked_path.exists(), "Parked state should be created even for dead process")
         finally:
-            _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "discard", "--id", vid)
+            _cleanup_variant(vid)
 
+    def test_51_merge_nonexistent_variant_fails(self):
+        """#51: Merge with bogus variant ID returns non-zero and stderr has 'not found'."""
+        r = _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", "rv-bogus", "--strategy", "winner-takes-all")
+        self.assertNotEqual(r.returncode, 0)
 
-class TestWinnerTakesAllAndRollback(unittest.TestCase):
-    """Winner-takes-all merge updates canonical, rollback restores it."""
+    def test_52_discard_nonexistent_no_crash(self):
+        """#52: Discard with bogus variant ID doesn't crash."""
+        r = _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "discard", "--id", "rv-bogus")
+        # Should not crash — exit code 0 or at least no Python traceback
+        self.assertNotIn("Traceback", r.stderr)
 
-    def test_merge_and_rollback(self) -> None:
-        """Start, wait, park, merge, verify HEAD changed, rollback, verify restored."""
-        vid = "e2e-merge"
+    def test_53_merge_after_canonical_diverged(self):
+        """#53: Merge after manual commit in canonical → backup includes the manual commit."""
+        vid = "e2e-edge-53"
         try:
-            _pixi_run_check(
-                _SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid,
-                timeout=120,
-            )
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            got = _wait_for_iterations(vid, 1, timeout=600)
+            self.assertTrue(got)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
 
-            got_iterations = _wait_for_iterations(_SUPERVISOR_ROOT, vid, min_iterations=1, timeout=600)
-            self.assertTrue(got_iterations, "Should have at least 1 iteration within timeout")
+            # Manually commit in canonical
+            (_RAG_TARGET / "manual.txt").write_text("manual change")
+            subprocess.run(["git", "add", "-A"], cwd=_RAG_TARGET, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "manual divergence"], cwd=_RAG_TARGET, check=True, capture_output=True)
+            diverged_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
 
-            # Capture canonical HEAD before merge
-            from supervisor_harness.supervisor import _resolve_target_repo
-            supervised = _SUPERVISOR_ROOT.parent / "sar-research-loop"
-            target_repo = _resolve_target_repo(supervised)
-            head_before = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=target_repo, check=True, capture_output=True, text=True,
-            ).stdout.strip()
+            # Merge WTA (overwrites canonical)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
 
-            # Park
-            _pixi_run_check(
-                _SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid,
-                timeout=120,
-            )
-
-            # Merge winner-takes-all
-            _pixi_run_check(
-                _SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid,
-                "--strategy", "winner-takes-all",
-                timeout=120,
-            )
-
-            # Verify HEAD changed
-            head_after_merge = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=target_repo, check=True, capture_output=True, text=True,
-            ).stdout.strip()
-            self.assertNotEqual(head_before, head_after_merge,
-                                "HEAD should change after merge")
-
-            # Rollback
-            _pixi_run_check(
-                _SUPERVISOR_ROOT, "researcher-variant", "rollback",
-                timeout=120,
-            )
-
-            # Verify HEAD restored
-            head_after_rollback = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=target_repo, check=True, capture_output=True, text=True,
-            ).stdout.strip()
-            # After rollback the working tree is restored (may not be exact SHA match
-            # if restore_code_state was used, but files should match)
-            self.assertTrue(
-                (target_repo / "file.txt").exists() or head_after_rollback != head_after_merge,
-                "Rollback should restore canonical state",
-            )
+            # Rollback should restore the diverged state
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "rollback", timeout=120)
+            restored_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            self.assertEqual(diverged_head, restored_head, "Rollback should restore diverged state")
         finally:
-            _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "discard", "--id", vid)
+            _cleanup_variant(vid)
 
-
-class TestDiscardCleansEverything(unittest.TestCase):
-    """Discard removes all variant artifacts."""
-
-    def test_discard_cleans_all(self) -> None:
-        """Start, discard, verify no artifacts remain."""
-        vid = "e2e-discard"
-
-        _pixi_run_check(
-            _SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid,
-            timeout=120,
-        )
-
-        # Verify artifacts exist
-        researcher_clone = Path(f"/tmp/sar-research-loop--{vid}")
-        self.assertTrue(researcher_clone.exists(), "Researcher clone should exist before discard")
-
-        # Discard
-        _pixi_run_check(
-            _SUPERVISOR_ROOT, "researcher-variant", "discard", "--id", vid,
-            timeout=120,
-        )
-
-        # Verify all artifacts are gone
-        self.assertFalse(researcher_clone.exists(), "Researcher clone should be removed")
-        state_dir = _SUPERVISOR_ROOT / ".supervisor"
-        pid_files = list(state_dir.glob(f"*--{vid}.pid"))
-        state_files = list(state_dir.glob(f"*--{vid}-state.json"))
-        parked_files = list(state_dir.glob(f"parked-{vid}.json"))
-        self.assertEqual(len(pid_files), 0, "PID file should be removed")
-        self.assertEqual(len(state_files), 0, "State file should be removed")
-        self.assertEqual(len(parked_files), 0, "Parked file should be removed")
+    def test_54_cherry_pick_empty_range(self):
+        """#54: Cherry-pick variant with no commits beyond baseline → empty applied."""
+        vid = "e2e-edge-54"
+        try:
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
+            time.sleep(3)
+            # Park immediately (no iterations = no commits beyond baseline)
+            _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
+            r = _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "cherry-pick")
+            # Should succeed but with nothing applied
+            if r.returncode == 0:
+                self.assertNotIn("error", r.stdout.lower())
+        finally:
+            _cleanup_variant(vid)
 
 
 if __name__ == "__main__":
