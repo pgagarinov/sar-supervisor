@@ -3,10 +3,11 @@
 These tests are slow (~20 min) and require:
 - Working Claude CLI installation
 - All SAR repos deployed as siblings
-- CLAUDE_CONFIG_DIRS set with 3+ profiles
+- CLAUDE_CONFIG_DIR set (the profile for THIS session)
+- CLAUDE_CONFIG_DIRS set with 3+ profiles (colon-separated)
 - Target at baseline tag
 
-Skipped by default — run with: pixi run -e dev test -m e2e
+Run with: CLAUDE_CONFIG_DIR=~/.claude-profile-1 pixi run -e dev test -m e2e
 """
 from __future__ import annotations
 
@@ -19,7 +20,22 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.timeout(900)]  # 15 min per E2E test
+
+# Fail fast if required env vars are not set
+_CLAUDE_CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR", "")
+_CLAUDE_CONFIG_DIRS = os.environ.get("CLAUDE_CONFIG_DIRS", "")
+
+if not _CLAUDE_CONFIG_DIR:
+    raise RuntimeError(
+        "CLAUDE_CONFIG_DIR is not set. E2E tests require an explicit profile.\n"
+        "Run with: CLAUDE_CONFIG_DIR=~/.claude-profile-1 CLAUDE_CONFIG_DIRS=... pixi run -e dev test -m e2e"
+    )
+if not _CLAUDE_CONFIG_DIRS:
+    raise RuntimeError(
+        "CLAUDE_CONFIG_DIRS is not set. E2E tests require the full profile list.\n"
+        "Set it in .env or export it."
+    )
 
 _THIS_DIR = Path(__file__).parent
 _SUPERVISOR_ROOT = _THIS_DIR.parent

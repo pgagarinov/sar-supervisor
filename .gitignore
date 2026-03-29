@@ -19,3 +19,4 @@ build/
 /tmp/
 *.log
 pixi.lock
+test-results.xml

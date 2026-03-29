@@ -55,12 +55,13 @@ test = "PYTHONPATH=src python -m pytest tests/ -v"
 python = "3.14.*"
 
 [dependency-groups]
-dev = ["pytest>=8,<9"]
+dev = ["pytest>=8,<9", "pytest-timeout>=2,<3", "pytest-xdist>=3,<4"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = ["-v", "--tb=short", "-m", "not e2e"]
+addopts = ["-v", "--tb=short", "-m", "not e2e", "-n", "auto", "--junitxml=test-results.xml"]
+timeout = 30
 markers = ["e2e: end-to-end tests requiring real Claude sessions (slow, run with -m e2e)"]

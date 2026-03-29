@@ -73,9 +73,10 @@ def _tag(repo: Path, tag_name: str) -> None:
 class _EdgeCaseTestBase(unittest.TestCase):
     """Base class with a complete workspace for edge case tests."""
 
-    variant_id: str = "rv-edge"
+    variant_id: str = ""
 
     def setUp(self) -> None:
+        self.variant_id = f"rv-{self.__class__.__name__.lower()}"
         self._tmpdir = tempfile.TemporaryDirectory()
         self.tmpdir = Path(self._tmpdir.name)
 

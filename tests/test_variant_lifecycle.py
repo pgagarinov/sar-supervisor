@@ -78,9 +78,11 @@ class _VariantTestBase(unittest.TestCase):
     internal calls to RepoPaths.discover() inside production code work.
     """
 
-    variant_id: str = "rv-test-lifecycle"
+    variant_id: str = ""  # Auto-set from class name in setUp
 
     def setUp(self) -> None:
+        # Unique variant_id per test class to avoid parallel collisions
+        self.variant_id = f"rv-{self.__class__.__name__.lower()}"
         self._tmpdir = tempfile.TemporaryDirectory()
         self.tmpdir = Path(self._tmpdir.name)
 
@@ -439,6 +441,41 @@ class TestListParkedVariants(_VariantTestBase):
         for item in result:
             self.assertIn("metrics", item)
             self.assertIsNotNone(item["metrics"])
+
+
+class TestCLIVariantStartKwargsMatch(unittest.TestCase):
+    """Regression: CLI must only pass kwargs that start_researcher_variant accepts."""
+
+    def test_cli_does_not_pass_unknown_kwargs(self):
+        """Every kwarg the CLI passes to start_researcher_variant must exist in its signature."""
+        import inspect
+        import re
+
+        from supervisor_harness.supervisor import start_researcher_variant
+
+        # Get accepted params from function signature
+        sig = inspect.signature(start_researcher_variant)
+        accepted = set(sig.parameters.keys())
+
+        # Parse the CLI source to find what kwargs it passes
+        cli_path = Path(__file__).parent.parent / "src" / "supervisor_harness" / "cli.py"
+        source = cli_path.read_text()
+
+        # Find the call to start_researcher_variant
+        call_match = re.search(
+            r"start_researcher_variant\((.*?)\)", source, re.DOTALL
+        )
+        self.assertIsNotNone(call_match, "CLI should call start_researcher_variant")
+
+        call_text = call_match.group(1)
+        kwarg_names = set(re.findall(r"(\w+)\s*=", call_text))
+        kwarg_names.discard("paths")  # positional
+
+        unknown = kwarg_names - accepted
+        self.assertEqual(
+            unknown, set(),
+            f"CLI passes kwargs not accepted by start_researcher_variant: {unknown}",
+        )
 
 
 if __name__ == "__main__":

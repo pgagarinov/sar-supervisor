@@ -546,7 +546,6 @@ def _cmd_loop(args: argparse.Namespace) -> int:
 def _cmd_variant_start(args: argparse.Namespace) -> int:
     paths = _paths_from_args(args)
     variant_id = getattr(args, "id", None)
-    base_branch = getattr(args, "base_branch", None)
     prompt = getattr(args, "prompt", None)
     config_dir = Path(args.config_dir) if getattr(args, "config_dir", None) else None
     variant_path = Path(args.variant) if getattr(args, "variant", None) else None
@@ -557,7 +556,6 @@ def _cmd_variant_start(args: argparse.Namespace) -> int:
         variant_id=variant_id,
         prompt=prompt,
         variant_path=variant_path,
-        base_branch=base_branch,
         config_dir=config_dir,
         variant_index=running_count,
     )
@@ -823,7 +821,6 @@ def build_parser() -> argparse.ArgumentParser:
     var_start.add_argument("--id", default=None, help="Variant ID (auto-generated if omitted)")
     var_start.add_argument("--prompt", default=None, help="Prompt override")
     var_start.add_argument("--variant", default=None, help="Path to variant SKILL.md to apply")
-    var_start.add_argument("--base-branch", default=None, help="Branch to fork from (e.g. exp-001)")
     var_start.add_argument("--config-dir", default=None, help="Claude config dir override")
     var_start.set_defaults(func=_cmd_variant_start)
 
