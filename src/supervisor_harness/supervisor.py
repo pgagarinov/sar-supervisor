@@ -491,14 +491,16 @@ def _resolve_target_repo(supervised_repo: Path) -> Path:
 
 
 def _create_variant_clone(
-    supervised_repo: Path, variant_id: str,
+    supervised_repo: Path, variant_id: str, *, clone_base: Path | None = None,
 ) -> Path:
     """Create an isolated clone of the supervised repo for this researcher variant.
 
     Uses git clone --local (hardlinks) for fast, space-efficient, fully isolated copies.
+    clone_base defaults to /tmp if not provided.
     Returns the clone path.
     """
-    clone_path = Path(f"/tmp/sar-research-loop--{variant_id}")
+    base = clone_base or Path("/tmp")
+    clone_path = base / f"{supervised_repo.name}--{variant_id}"
     if clone_path.exists():
         return clone_path
 
@@ -512,13 +514,15 @@ def _create_variant_clone(
 
 
 def _create_target_clone(
-    target_repo: Path, variant_id: str,
+    target_repo: Path, variant_id: str, *, clone_base: Path | None = None,
 ) -> Path:
     """Create an isolated clone of the target repo for this researcher variant.
 
+    clone_base defaults to target_repo's parent if not provided.
     Returns the target clone path.
     """
-    clone_path = Path(f"{target_repo}--{variant_id}")
+    base = clone_base or target_repo.parent
+    clone_path = base / f"{target_repo.name}--{variant_id}"
     if clone_path.exists():
         return clone_path
 
@@ -533,28 +537,29 @@ def _create_target_clone(
 
 def _remove_variant_clones(
     supervised_repo: Path, target_repo: Path, variant_id: str,
+    *, clone_base: Path | None = None,
 ) -> None:
     """Remove all clones and temp files for a researcher variant."""
     import shutil as _shutil
 
     # Researcher clone
-    researcher_clone = Path(f"/tmp/sar-research-loop--{variant_id}")
+    base = clone_base or Path("/tmp")
+    researcher_clone = base / f"{supervised_repo.name}--{variant_id}"
     if researcher_clone.exists():
         _shutil.rmtree(researcher_clone)
 
     # Target clone (initial)
-    target_clone = Path(f"{target_repo}--{variant_id}")
+    target_base = clone_base or target_repo.parent
+    target_clone = target_base / f"{target_repo.name}--{variant_id}"
     if target_clone.exists():
         _shutil.rmtree(target_clone)
 
     # Additional target variant clones (tv-1, tv-2, etc.)
-    for tv_clone in target_repo.parent.glob(f"{target_repo.name}--{variant_id}-tv-*"):
+    for tv_clone in target_base.glob(f"{target_repo.name}--{variant_id}-tv-*"):
         _shutil.rmtree(tv_clone)
 
-    # Temp files (chroma, reports)
-    for chroma_dir in Path("/tmp").glob(f"fluxapi-chroma--{variant_id}*"):
-        _shutil.rmtree(chroma_dir)
-    for report_file in Path("/tmp").glob(f"rag-eval-report--{variant_id}*.json"):
+    # Temp files (reports)
+    for report_file in base.glob(f"rag-eval-report--{variant_id}*.json"):
         report_file.unlink()
 
 
@@ -579,16 +584,17 @@ def start_researcher_variant(
     """
     var_cfg = paths.config.get("variants", {})
     prefix = var_cfg.get("id_prefix", "rv")
+    clone_base = Path(var_cfg["clone_dir"]) if "clone_dir" in var_cfg else None
 
     if variant_id is None:
         variant_id = _generate_variant_id(paths, prefix=prefix)
 
     # Create isolated researcher clone
-    researcher_clone = _create_variant_clone(paths.supervised_repo, variant_id)
+    researcher_clone = _create_variant_clone(paths.supervised_repo, variant_id, clone_base=clone_base)
 
     # Create isolated target clone
     target_repo = _resolve_target_repo(paths.supervised_repo)
-    target_clone = _create_target_clone(target_repo, variant_id)
+    target_clone = _create_target_clone(target_repo, variant_id, clone_base=clone_base)
 
     # If a variant SKILL.md was provided, apply it to the clone
     if variant_path and variant_path.exists():
@@ -674,8 +680,12 @@ def park_researcher_variant(
     # Stop the process
     stop_researcher_variant(paths, variant_id)
 
+    var_cfg = paths.config.get("variants", {})
+    clone_base = Path(var_cfg["clone_dir"]) if "clone_dir" in var_cfg else None
+
     target_repo = _resolve_target_repo(paths.supervised_repo)
-    target_clone = Path(f"{target_repo}--{variant_id}")
+    target_base = clone_base or target_repo.parent
+    target_clone = target_base / f"{target_repo.name}--{variant_id}"
 
     # Auto-commit any uncommitted target changes
     if target_clone.exists():
@@ -691,7 +701,8 @@ def park_researcher_variant(
 
     # Read final metrics
     metrics: dict[str, Any] | None = None
-    report_path = Path(f"/tmp/rag-eval-report--{variant_id}.json")
+    researcher_base = clone_base or Path("/tmp")
+    report_path = researcher_base / f"rag-eval-report--{variant_id}.json"
     if not report_path.exists():
         report_path = Path("/tmp/rag-eval-report.json")
     if report_path.exists():
@@ -699,7 +710,8 @@ def park_researcher_variant(
         metrics = report_summary(report_path)
 
     # Read iteration summary from results.tsv
-    results_path = Path(f"/tmp/sar-research-loop--{variant_id}/results.tsv")
+    researcher_clone_path = researcher_base / f"{paths.supervised_repo.name}--{variant_id}"
+    results_path = researcher_clone_path / "results.tsv"
     if not results_path.exists():
         results_path = paths.supervised_repo / "results.tsv"
     total_iterations = 0
@@ -721,8 +733,8 @@ def park_researcher_variant(
     var_state = load_state(
         RepoPaths.discover(
             workspace_root=paths.workspace_root,
-            supervised_repo=Path(f"/tmp/sar-research-loop--{variant_id}")
-            if Path(f"/tmp/sar-research-loop--{variant_id}").exists()
+            supervised_repo=researcher_clone_path
+            if researcher_clone_path.exists()
             else paths.supervised_repo,
             variant_id=variant_id,
         )
@@ -745,10 +757,9 @@ def park_researcher_variant(
     parked_path.write_text(json.dumps(parked_state, indent=2), encoding="utf-8")
 
     # Clean up researcher clone only (target clone preserved!)
-    researcher_clone = Path(f"/tmp/sar-research-loop--{variant_id}")
-    if researcher_clone.exists():
+    if researcher_clone_path.exists():
         import shutil as _shutil
-        _shutil.rmtree(researcher_clone)
+        _shutil.rmtree(researcher_clone_path)
 
     return parked_state
 
@@ -757,7 +768,9 @@ def discard_researcher_variant(paths: RepoPaths, variant_id: str) -> None:
     """Stop and destroy everything for a researcher variant."""
     stop_researcher_variant(paths, variant_id)
     target_repo = _resolve_target_repo(paths.supervised_repo)
-    _remove_variant_clones(paths.supervised_repo, target_repo, variant_id)
+    var_cfg = paths.config.get("variants", {})
+    clone_base = Path(var_cfg["clone_dir"]) if "clone_dir" in var_cfg else None
+    _remove_variant_clones(paths.supervised_repo, target_repo, variant_id, clone_base=clone_base)
     # Remove parked state if any
     parked_path = paths.state_dir / f"parked-{variant_id}.json"
     if parked_path.exists():

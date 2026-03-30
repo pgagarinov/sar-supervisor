@@ -67,25 +67,15 @@ class TestCreateVariantClone(unittest.TestCase):
         self.supervised = self.tmpdir / "sar-research-loop"
         _init_repo(self.supervised)
         self.variant_id = "test-clone-iso"
-        # Ensure no leftover clone
-        clone_path = Path(f"/tmp/sar-research-loop--{self.variant_id}")
-        if clone_path.exists():
-            import shutil
-            shutil.rmtree(clone_path)
 
     def tearDown(self) -> None:
-        clone_path = Path(f"/tmp/sar-research-loop--{self.variant_id}")
-        if clone_path.exists():
-            import shutil
-            shutil.rmtree(clone_path)
         self._tmpdir.cleanup()
 
     def test_clone_has_separate_git_dir(self) -> None:
         """_create_variant_clone creates a clone with its own .git directory."""
-        clone = _create_variant_clone(self.supervised, self.variant_id)
+        clone = _create_variant_clone(self.supervised, self.variant_id, clone_base=self.tmpdir)
         self.assertTrue(clone.exists(), "Clone directory should exist")
         self.assertTrue((clone / ".git").exists(), "Clone should have its own .git")
-        # The .git dirs should be different paths (not shared)
         supervised_git = (self.supervised / ".git").resolve()
         clone_git = (clone / ".git").resolve()
         self.assertNotEqual(supervised_git, clone_git)
@@ -99,30 +89,19 @@ class TestCreateTargetClone(unittest.TestCase):
         self.tmpdir = Path(self._tmpdir.name)
         self.target = self.tmpdir / "sar-rag-target"
         _init_repo(self.target)
-        # Create a fake .pixi directory so the symlink has something to point at
         (self.target / ".pixi").mkdir()
         (self.target / ".pixi" / "marker").write_text("pixi-env")
         self.variant_id = "test-target-iso"
-        # Clean up any leftover
-        clone_path = Path(f"{self.target}--{self.variant_id}")
-        if clone_path.exists():
-            import shutil
-            shutil.rmtree(clone_path)
 
     def tearDown(self) -> None:
-        clone_path = Path(f"{self.target}--{self.variant_id}")
-        if clone_path.exists():
-            import shutil
-            shutil.rmtree(clone_path)
         self._tmpdir.cleanup()
 
     def test_target_clone_has_pixi_symlink(self) -> None:
         """_create_target_clone creates a clone with .pixi symlinked from source."""
-        clone = _create_target_clone(self.target, self.variant_id)
+        clone = _create_target_clone(self.target, self.variant_id, clone_base=self.tmpdir)
         self.assertTrue(clone.exists(), "Target clone should exist")
         pixi_link = clone / ".pixi"
         self.assertTrue(pixi_link.is_symlink(), ".pixi should be a symlink")
-        # Symlink should point to the source .pixi (resolved)
         self.assertEqual(
             pixi_link.resolve(),
             (self.target / ".pixi").resolve(),
@@ -139,26 +118,15 @@ class TestConcurrentCloneCommits(unittest.TestCase):
         _init_repo(self.supervised)
         self.id_a = "test-concurrent-a"
         self.id_b = "test-concurrent-b"
-        for vid in (self.id_a, self.id_b):
-            p = Path(f"/tmp/sar-research-loop--{vid}")
-            if p.exists():
-                import shutil
-                shutil.rmtree(p)
 
     def tearDown(self) -> None:
-        for vid in (self.id_a, self.id_b):
-            p = Path(f"/tmp/sar-research-loop--{vid}")
-            if p.exists():
-                import shutil
-                shutil.rmtree(p)
         self._tmpdir.cleanup()
 
     def test_independent_commits(self) -> None:
         """Commits in clone A do not appear in clone B."""
-        clone_a = _create_variant_clone(self.supervised, self.id_a)
-        clone_b = _create_variant_clone(self.supervised, self.id_b)
+        clone_a = _create_variant_clone(self.supervised, self.id_a, clone_base=self.tmpdir)
+        clone_b = _create_variant_clone(self.supervised, self.id_b, clone_base=self.tmpdir)
 
-        # Configure git user in clones
         for clone in (clone_a, clone_b):
             subprocess.run(
                 ["git", "config", "user.email", "t@t"],
@@ -169,14 +137,10 @@ class TestConcurrentCloneCommits(unittest.TestCase):
                 cwd=clone, check=True, capture_output=True,
             )
 
-        # Commit in clone A
         head_a = _commit_file(clone_a, "a.txt", "from-a", "commit in A")
-
-        # Clone B should still be at original HEAD, not A's new commit
         head_b = _git_head(clone_b)
         self.assertNotEqual(head_a, head_b, "Clone B should not see A's commit")
 
-        # Commit in clone B
         head_b_new = _commit_file(clone_b, "b.txt", "from-b", "commit in B")
         self.assertNotEqual(head_b_new, head_a, "Clone heads should diverge")
 
@@ -194,42 +158,27 @@ class TestRemoveVariantClones(unittest.TestCase):
         self.variant_id = "test-remove-all"
 
     def tearDown(self) -> None:
-        # Safety cleanup in case the test fails
-        import shutil
-        for p in [
-            Path(f"/tmp/sar-research-loop--{self.variant_id}"),
-            Path(f"{self.target}--{self.variant_id}"),
-        ]:
-            if p.exists():
-                shutil.rmtree(p)
         self._tmpdir.cleanup()
 
     def test_removes_all_artifacts(self) -> None:
-        """Researcher clone, target clone, tv-* clones, chroma dirs, and reports are removed."""
-        # Create artifacts that _remove_variant_clones should clean
-        researcher_clone = Path(f"/tmp/sar-research-loop--{self.variant_id}")
+        """Researcher clone, target clone, tv-* clones, and reports are removed."""
+        researcher_clone = self.tmpdir / f"sar-research-loop--{self.variant_id}"
         researcher_clone.mkdir(parents=True, exist_ok=True)
 
-        target_clone = Path(f"{self.target}--{self.variant_id}")
+        target_clone = self.tmpdir / f"sar-rag-target--{self.variant_id}"
         target_clone.mkdir(parents=True, exist_ok=True)
 
-        tv_clone = Path(f"{self.target}--{self.variant_id}-tv-1")
+        tv_clone = self.tmpdir / f"sar-rag-target--{self.variant_id}-tv-1"
         tv_clone.mkdir(parents=True, exist_ok=True)
 
-        chroma_dir = Path(f"/tmp/fluxapi-chroma--{self.variant_id}")
-        chroma_dir.mkdir(parents=True, exist_ok=True)
-
-        report_file = Path(f"/tmp/rag-eval-report--{self.variant_id}.json")
+        report_file = self.tmpdir / f"rag-eval-report--{self.variant_id}.json"
         report_file.write_text("{}")
 
-        # Run cleanup
-        _remove_variant_clones(self.supervised, self.target, self.variant_id)
+        _remove_variant_clones(self.supervised, self.target, self.variant_id, clone_base=self.tmpdir)
 
-        # Verify all artifacts are gone
         self.assertFalse(researcher_clone.exists(), "Researcher clone should be removed")
         self.assertFalse(target_clone.exists(), "Target clone should be removed")
         self.assertFalse(tv_clone.exists(), "tv-* clone should be removed")
-        self.assertFalse(chroma_dir.exists(), "Chroma dir should be removed")
         self.assertFalse(report_file.exists(), "Report file should be removed")
 
 
@@ -242,34 +191,25 @@ class TestCloneFromCanonicalIsIndependent(unittest.TestCase):
         self.canonical = self.tmpdir / "sar-research-loop"
         _init_repo(self.canonical)
         self.variant_id = "test-independence"
-        clone_path = Path(f"/tmp/sar-research-loop--{self.variant_id}")
-        if clone_path.exists():
-            import shutil
-            shutil.rmtree(clone_path)
 
     def tearDown(self) -> None:
-        clone_path = Path(f"/tmp/sar-research-loop--{self.variant_id}")
-        if clone_path.exists():
-            import shutil
-            shutil.rmtree(clone_path)
         self._tmpdir.cleanup()
 
     def test_canonical_commits_dont_appear_in_clone(self) -> None:
         """Commits in canonical after cloning do not appear in the clone."""
-        clone = _create_variant_clone(self.canonical, self.variant_id)
-        clone_head_before = _git_head(clone)
+        clone = _create_variant_clone(self.canonical, self.variant_id, clone_base=self.tmpdir)
 
-        # Make a new commit in canonical
-        _commit_file(self.canonical, "new.txt", "new-content", "post-clone commit")
-        canonical_head = _git_head(self.canonical)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t"],
+            cwd=clone, check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"],
+            cwd=clone, check=True, capture_output=True,
+        )
 
-        # Clone should still be at its original HEAD
-        clone_head_after = _git_head(clone)
-        self.assertEqual(clone_head_before, clone_head_after,
-                         "Clone HEAD should not change when canonical gets new commits")
-        self.assertNotEqual(canonical_head, clone_head_after,
-                            "Clone and canonical should diverge after canonical commit")
+        head_before = _git_head(clone)
+        _commit_file(self.canonical, "new.txt", "new-content", "canonical update")
+        head_after = _git_head(clone)
 
-
-if __name__ == "__main__":
-    unittest.main()
+        self.assertEqual(head_before, head_after, "Clone should not see canonical's new commit")

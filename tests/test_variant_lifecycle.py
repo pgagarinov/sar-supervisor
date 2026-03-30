@@ -112,6 +112,10 @@ class _VariantTestBase(unittest.TestCase):
         self.snapshots_dir = self.state_dir / "snapshots"
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
 
+        # Clone dir inside tmpdir — no /tmp/ collisions between parallel tests
+        self.clone_dir = self.tmpdir / "clones"
+        self.clone_dir.mkdir()
+
         # Write minimal harness.toml
         harness_toml = self.workspace / "harness.toml"
         harness_toml.write_text(
@@ -126,6 +130,8 @@ class _VariantTestBase(unittest.TestCase):
             '[reports.metric]\nreport = "primary"\nfield = "failed"\n'
             '[log]\n'
             f'path = "{self.tmpdir}/cc-test.log"\n'
+            '[variants]\n'
+            f'clone_dir = "{self.clone_dir}"\n'
         )
 
         # Profile dirs
@@ -149,13 +155,6 @@ class _VariantTestBase(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._env_patcher.stop()
-        # Clean up any clones created in /tmp
-        for p in Path("/tmp").glob(f"sar-research-loop--{self.variant_id}*"):
-            if p.exists():
-                shutil.rmtree(p)
-        target_clone = Path(f"{self.target}--{self.variant_id}")
-        if target_clone.exists():
-            shutil.rmtree(target_clone)
         self._tmpdir.cleanup()
 
 
@@ -191,8 +190,8 @@ class TestStartResearcherVariant(_VariantTestBase):
                 self.paths, self.variant_id, clean_first=False,
             )
 
-        researcher_clone = Path(f"/tmp/sar-research-loop--{self.variant_id}")
-        target_clone = Path(f"{self.target}--{self.variant_id}")
+        researcher_clone = self.clone_dir / f"{self.supervised.name}--{self.variant_id}"
+        target_clone = self.clone_dir / f"{self.target.name}--{self.variant_id}"
         self.assertTrue(researcher_clone.exists(), "Researcher clone should exist")
         self.assertTrue(target_clone.exists(), "Target clone should exist")
 
@@ -217,7 +216,7 @@ class TestStartResearcherVariant(_VariantTestBase):
                 clean_first=False,
             )
 
-        researcher_clone = Path(f"/tmp/sar-research-loop--{self.variant_id}")
+        researcher_clone = self.clone_dir / f"{self.supervised.name}--{self.variant_id}"
         skill_path = researcher_clone / ".claude" / "skills" / "start" / "SKILL.md"
         self.assertTrue(skill_path.exists(), "SKILL.md should exist in clone")
         content = skill_path.read_text()
@@ -255,7 +254,7 @@ class TestParkResearcherVariant(_VariantTestBase):
 
     def _setup_parked(self) -> Path:
         """Create a target clone with commits and a fake eval report. Returns target clone path."""
-        target_clone = _create_target_clone(self.target, self.variant_id)
+        target_clone = _create_target_clone(self.target, self.variant_id, clone_base=self.clone_dir)
 
         # Configure git user in clone
         subprocess.run(
@@ -271,13 +270,13 @@ class TestParkResearcherVariant(_VariantTestBase):
         _commit_file(target_clone, "improvement.py", "# better code", "improve target")
 
         # Write a fake eval report
-        report_path = Path(f"/tmp/rag-eval-report--{self.variant_id}.json")
+        report_path = self.clone_dir / f"rag-eval-report--{self.variant_id}.json"
         report_path.write_text(json.dumps({
             "total": 20, "passed": 18, "failed": 2,
         }))
 
         # Create researcher clone (park will try to stop it)
-        researcher_clone = _create_variant_clone(self.supervised, self.variant_id)
+        researcher_clone = _create_variant_clone(self.supervised, self.variant_id, clone_base=self.clone_dir)
 
         # Write variant state file so stop_run can find the PID
         var_paths = RepoPaths.discover(
@@ -303,7 +302,7 @@ class TestParkResearcherVariant(_VariantTestBase):
         self.assertIsNotNone(data["metrics"])
 
         # Cleanup report
-        report_path = Path(f"/tmp/rag-eval-report--{self.variant_id}.json")
+        report_path = self.clone_dir / f"rag-eval-report--{self.variant_id}.json"
         if report_path.exists():
             report_path.unlink()
 
@@ -328,14 +327,14 @@ class TestParkResearcherVariant(_VariantTestBase):
         self.assertEqual(status.stdout.strip(), "", "Target clone should have clean status")
 
         # Cleanup
-        report_path = Path(f"/tmp/rag-eval-report--{self.variant_id}.json")
+        report_path = self.clone_dir / f"rag-eval-report--{self.variant_id}.json"
         if report_path.exists():
             report_path.unlink()
 
     def test_removes_researcher_clone_keeps_target(self) -> None:
         """park_researcher_variant removes researcher clone but keeps target clone."""
         target_clone = self._setup_parked()
-        researcher_clone = Path(f"/tmp/sar-research-loop--{self.variant_id}")
+        researcher_clone = self.clone_dir / f"{self.supervised.name}--{self.variant_id}"
         self.assertTrue(researcher_clone.exists(), "Researcher clone should exist before park")
 
         park_researcher_variant(self.paths, self.variant_id)
@@ -344,7 +343,7 @@ class TestParkResearcherVariant(_VariantTestBase):
         self.assertTrue(target_clone.exists(), "Target clone should be preserved after park")
 
         # Cleanup
-        report_path = Path(f"/tmp/rag-eval-report--{self.variant_id}.json")
+        report_path = self.clone_dir / f"rag-eval-report--{self.variant_id}.json"
         if report_path.exists():
             report_path.unlink()
 
@@ -354,9 +353,9 @@ class TestDiscardResearcherVariant(_VariantTestBase):
 
     def test_removes_all_clones_and_parked_state(self) -> None:
         """discard_researcher_variant removes all clones and parked state."""
-        # Create clones
-        researcher_clone = _create_variant_clone(self.supervised, self.variant_id)
-        target_clone = _create_target_clone(self.target, self.variant_id)
+        # Create clones in clone_dir (matching config)
+        researcher_clone = _create_variant_clone(self.supervised, self.variant_id, clone_base=self.clone_dir)
+        target_clone = _create_target_clone(self.target, self.variant_id, clone_base=self.clone_dir)
 
         # Write a PID file
         var_paths = RepoPaths.discover(
@@ -490,7 +489,7 @@ class TestLaunchSpecIncludesTargetRepo(_VariantTestBase):
             )
 
         # The launch command must contain TARGET_REPO pointing to the clone
-        target_clone_path = f"{self.target}--{self.variant_id}"
+        target_clone_path = str(self.clone_dir / f"{self.target.name}--{self.variant_id}")
         self.assertIn("TARGET_REPO=", launch_spec.command,
                        "Launch command must set TARGET_REPO env var")
         self.assertIn(target_clone_path, launch_spec.command,
