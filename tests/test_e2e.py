@@ -26,6 +26,24 @@ pytestmark = [
     pytest.mark.xdist_group("e2e-serial"),  # E2E tests share real filesystem state — run on one worker
 ]
 
+# Load .env from supervisor root if env vars are not already set
+def _load_dot_env() -> None:
+    """Read .env from the supervisor repo root, set missing env vars."""
+    env_path = Path(__file__).parent.parent / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, val = line.partition("=")
+            key, val = key.strip(), val.strip()
+            if key not in os.environ:
+                os.environ[key] = val
+
+_load_dot_env()
+
 # Fail fast if required env vars are not set
 _CLAUDE_CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR", "")
 _CLAUDE_CONFIG_DIRS = os.environ.get("CLAUDE_CONFIG_DIRS", "")
@@ -33,7 +51,7 @@ _CLAUDE_CONFIG_DIRS = os.environ.get("CLAUDE_CONFIG_DIRS", "")
 if not _CLAUDE_CONFIG_DIR:
     raise RuntimeError(
         "CLAUDE_CONFIG_DIR is not set. E2E tests require an explicit profile.\n"
-        "Run with: CLAUDE_CONFIG_DIR=~/.claude-profile-1 CLAUDE_CONFIG_DIRS=... pixi run -e dev test -m e2e"
+        "Run with: CLAUDE_CONFIG_DIR=~/.claude-profile-1 pixi run -e dev test -m e2e"
     )
 if not _CLAUDE_CONFIG_DIRS:
     raise RuntimeError(
