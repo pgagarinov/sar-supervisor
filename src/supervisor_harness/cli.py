@@ -470,6 +470,23 @@ def _cmd_prompt_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_prompt_delete(args: argparse.Namespace) -> int:
+    paths = _paths_from_args(args)
+    claude_dir = paths.supervised_repo / ".claude"
+    target = claude_dir / args.path
+    if not target.exists():
+        print(f"not found: {args.path}", file=sys.stderr)
+        return 1
+    target.unlink()
+    print(f"deleted: {args.path}")
+    subprocess.run(["git", "add", str(target)], cwd=paths.supervised_repo, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", f"dot-claude-delete: remove {args.path}"],
+        cwd=paths.supervised_repo, capture_output=True,
+    )
+    return 0
+
+
 def _cmd_prompt_history(args: argparse.Namespace) -> int:
     paths = _paths_from_args(args)
     history = prompt_edit_history(paths, limit=args.limit)
@@ -797,6 +814,10 @@ def build_parser() -> argparse.ArgumentParser:
     prompt_diff_parser = subparsers.add_parser("prompt-diff", parents=[common])
     prompt_diff_parser.add_argument("name", help="Asset name to diff against stdin")
     prompt_diff_parser.set_defaults(func=_cmd_prompt_diff)
+
+    prompt_delete_parser = subparsers.add_parser("prompt-delete", parents=[common])
+    prompt_delete_parser.add_argument("path", help="Path relative to .claude/ to delete")
+    prompt_delete_parser.set_defaults(func=_cmd_prompt_delete)
 
     prompt_history_parser = subparsers.add_parser("prompt-history", parents=[common])
     prompt_history_parser.add_argument("--json", action="store_true")

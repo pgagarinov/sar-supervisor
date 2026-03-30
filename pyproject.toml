@@ -41,6 +41,7 @@ researcher-dot-claude-list = "PYTHONPATH=src python -m supervisor_harness.cli pr
 researcher-dot-claude-read = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-read", depends-on = [] }
 researcher-dot-claude-edit = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-edit", depends-on = [] }
 researcher-dot-claude-diff = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-diff", depends-on = [] }
+researcher-dot-claude-delete = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli prompt-delete", depends-on = [] }
 researcher-dot-claude-history = "PYTHONPATH=src python -m supervisor_harness.cli prompt-history"
 researcher-restore = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli restore", depends-on = [] }
 researcher-revert-safe = "PYTHONPATH=src python -m supervisor_harness.cli revert-safe"
