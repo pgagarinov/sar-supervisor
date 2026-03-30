@@ -10,8 +10,16 @@ Instead, use the `dot-claude-*` and `researcher-dot-claude-*` pixi tasks:
 ## For the supervised repo (researcher)
 - `pixi run researcher-dot-claude-list` — list researcher's .claude/ assets
 - `pixi run researcher-dot-claude-read <path>` — read an asset
-- `echo "content" | pixi run researcher-dot-claude-edit <path>` — create or edit (logged, diffed, auto-committed)
+- `pixi run researcher-dot-claude-edit <path> --sed 's/old/new/g'` — targeted find/replace (logged, diffed, auto-committed)
+- `echo "content" | pixi run researcher-dot-claude-edit <path>` — full content replacement (logged, diffed, auto-committed)
 - `echo "content" | pixi run researcher-dot-claude-diff <path>` — preview diff without writing
+
+## Prefer --sed for targeted edits
+When changing specific strings in an asset, use `--sed` instead of piping the entire file:
+```bash
+pixi run researcher-dot-claude-edit skill --sed 's|old-pattern|new-pattern|g'
+```
+This is more precise than reading the file, transforming with external `sed`, and piping back.
 
 ## Creating new skills in the researcher
 ```bash
