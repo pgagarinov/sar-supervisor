@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -197,7 +198,11 @@ class HarnessTestCase(unittest.TestCase):
             pixi_bin="/opt/bin/pixi",
         )
 
+        fake_config_dir = self.root / ".claude-test"
+        fake_config_dir.mkdir(exist_ok=True)
+
         with (
+            patch.dict(os.environ, {"CLAUDE_CONFIG_DIRS": str(fake_config_dir)}),
             patch("supervisor_harness.cli.read_pid", return_value=None),
             patch("supervisor_harness.cli.process_running", return_value=False),
             patch(
