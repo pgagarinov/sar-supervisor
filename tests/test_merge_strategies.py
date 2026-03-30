@@ -488,6 +488,32 @@ class TestBranchAndContinuePixiSymlink(_MergeTestBase):
                         ".pixi should exist after B&C even when source was a symlink")
 
 
+class TestBranchAndContinuePreservesRemoteUrl(_MergeTestBase):
+    """B&C merge must preserve the original remote URL in the canonical repo."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        _commit_file(self.target_clone, "bc.txt", "v", "bc commit")
+        # Add a fake GitHub remote URL on the canonical target
+        subprocess.run(
+            ["git", "remote", "add", "origin", "git@github.com:user/repo.git"],
+            cwd=self.canonical_target, check=True, capture_output=True,
+        )
+
+    def test_remote_url_preserved_after_bac(self) -> None:
+        """After B&C merge, the canonical repo's origin URL must match the original, not the clone's."""
+        merge_branch_and_continue(self.paths, self.variant_id)
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=self.canonical_target, check=True, capture_output=True, text=True,
+        )
+        actual_url = result.stdout.strip()
+        self.assertEqual(
+            actual_url, "git@github.com:user/repo.git",
+            f"Remote URL should be preserved after B&C, got: {actual_url}",
+        )
+
+
 class TestBranchAndContinuePixiDirInClone(_MergeTestBase):
     """B&C merge must handle case where clone has a real .pixi directory (not a symlink)."""
 

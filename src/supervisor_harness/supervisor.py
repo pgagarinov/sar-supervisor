@@ -955,8 +955,16 @@ def merge_branch_and_continue(
             _shutil.rmtree(backup_path)
         target_repo.rename(backup_path)
 
+        # Save the original remote URL before moving
+        _orig_remote = _git_cmd(backup_path, "remote", "get-url", "origin")
+        _orig_remote_url = _orig_remote.stdout.strip() if _orig_remote.returncode == 0 else None
+
         # Move winner to canonical location
         target_clone.rename(target_repo)
+
+        # Restore the original remote URL (clone's origin points to the old canonical path)
+        if _orig_remote_url:
+            _git_cmd(target_repo, "remote", "set-url", "origin", _orig_remote_url)
 
         # Re-symlink .pixi (may point to old location after rename)
         pixi_link = target_repo / ".pixi"
