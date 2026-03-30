@@ -26,5 +26,20 @@ This is more precise than reading the file, transforming with external `sed`, an
 echo "skill content" | pixi run researcher-dot-claude-edit skills/my-skill/SKILL.md
 ```
 
+## Agent files MUST have YAML frontmatter
+
+When creating or editing agent files (`.claude/agents/*.md`) in the researcher, ALWAYS include YAML frontmatter:
+
+```yaml
+---
+name: agent-name
+description: "What this agent does — used by Claude Code for agent discovery"
+tools: Bash, Read, Edit, Grep
+model: haiku
+---
+```
+
+Required fields: `name`, `description`. Without frontmatter, the agent will not be discoverable by Claude Code.
+
 ## Why
 Every .claude/ change must be logged, diffed, and auto-committed via `harness_core.prompt_editor`. Direct file operations (including sed, awk, and other shell tools) bypass this tracking. This applies to ALL subagents — never dispatch an agent that uses Write or Edit on .claude/ files.
