@@ -62,6 +62,6 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = ["-v", "--tb=short", "-m", "not e2e", "-n", "auto", "--junitxml=test-results.xml"]
+addopts = ["-v", "--tb=short", "-n", "auto", "--dist", "loadgroup", "--junitxml=test-results.xml"]
 timeout = 30
 markers = ["e2e: end-to-end tests requiring real Claude sessions (slow, run with -m e2e)"]

@@ -378,6 +378,116 @@ class TestRollbackMerge(_MergeTestBase):
             rollback_merge(self.paths)
 
 
+class TestCherryPickAutoFetch(_MergeTestBase):
+    """merge_cherry_pick must fetch objects from variant clones before cherry-picking."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # Make commits in the clone WITHOUT manually fetching into canonical.
+        # The production code should handle fetching automatically.
+        self.commit_sha = _commit_file(
+            self.target_clone, "auto-fetched.txt", "auto", "auto-fetch commit",
+        )
+        # NOTE: Deliberately no manual git fetch here — that's the bug.
+
+    def test_cherry_pick_fetches_objects_automatically(self) -> None:
+        """merge_cherry_pick fetches clone objects into canonical before picking."""
+        result = merge_cherry_pick(self.paths, [self.variant_id])
+        self.assertGreater(len(result["applied"]), 0,
+                           "Cherry-pick should apply commits even without prior fetch")
+        self.assertTrue(
+            (self.canonical_target / "auto-fetched.txt").exists(),
+            "auto-fetched.txt should exist in canonical after cherry-pick",
+        )
+
+
+class TestRollbackRestoresHead(_MergeTestBase):
+    """rollback_merge must restore HEAD to its pre-merge state."""
+
+    def test_rollback_after_wta_restores_head(self) -> None:
+        """After WTA merge + rollback, HEAD matches the original pre-merge HEAD."""
+        _commit_file(self.target_clone, "wta.txt", "v", "wta commit")
+        merge_winner_takes_all(self.paths, self.variant_id)
+        self.assertNotEqual(git_head(self.canonical_target), self.original_head)
+        rollback_merge(self.paths)
+        self.assertEqual(git_head(self.canonical_target), self.original_head,
+                         "HEAD should be restored to pre-merge state after rollback")
+
+    def test_rollback_after_cherry_pick_restores_head(self) -> None:
+        """After cherry-pick merge + rollback, HEAD matches the original."""
+        _commit_file(self.target_clone, "cp.txt", "v", "cp commit")
+        subprocess.run(
+            ["git", "fetch", str(self.target_clone), "main"],
+            cwd=self.canonical_target, check=True, capture_output=True,
+        )
+        merge_cherry_pick(self.paths, [self.variant_id])
+        rollback_merge(self.paths)
+        self.assertEqual(git_head(self.canonical_target), self.original_head,
+                         "HEAD should be restored after cherry-pick rollback")
+
+    def test_rollback_after_bac_restores_head(self) -> None:
+        """After B&C merge + rollback, HEAD matches the original."""
+        _commit_file(self.target_clone, "bc.txt", "v", "bc commit")
+        merge_branch_and_continue(self.paths, self.variant_id)
+        rollback_merge(self.paths)
+        self.assertEqual(git_head(self.canonical_target), self.original_head,
+                         "HEAD should be restored after B&C rollback")
+
+
+class TestRollbackCleansUpBackup(_MergeTestBase):
+    """rollback_merge must remove the backup so a second rollback fails."""
+
+    def test_rollback_removes_code_state_backup(self) -> None:
+        """After WTA merge + rollback, the backup is cleaned up."""
+        _commit_file(self.target_clone, "clean.txt", "v", "commit")
+        merge_winner_takes_all(self.paths, self.variant_id)
+        rollback_merge(self.paths)
+        backup_dir = self.paths.snapshots_dir / "pre-merge-backup"
+        self.assertFalse(backup_dir.exists(),
+                         "Backup should be removed after successful rollback")
+
+    def test_rollback_removes_bac_backup(self) -> None:
+        """After B&C merge + rollback, the backup directory is cleaned up."""
+        _commit_file(self.target_clone, "clean.txt", "v", "commit")
+        merge_branch_and_continue(self.paths, self.variant_id)
+        rollback_merge(self.paths)
+        backup_path = Path(f"{self.canonical_target}.pre-merge-backup")
+        self.assertFalse(backup_path.exists(),
+                         "Backup should be removed after successful rollback")
+
+    def test_second_rollback_raises_after_first(self) -> None:
+        """A second rollback raises FileNotFoundError after backup is cleaned up."""
+        _commit_file(self.target_clone, "clean.txt", "v", "commit")
+        merge_winner_takes_all(self.paths, self.variant_id)
+        rollback_merge(self.paths)
+        with self.assertRaises(FileNotFoundError):
+            rollback_merge(self.paths)
+
+
+class TestBranchAndContinuePixiSymlink(_MergeTestBase):
+    """B&C merge must re-create .pixi symlink even when source .pixi is a symlink."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        _commit_file(self.target_clone, "bc.txt", "v", "bc commit")
+
+    def test_pixi_symlink_recreated_when_source_is_symlink(self) -> None:
+        """After B&C, .pixi exists even when the original was a symlink itself."""
+        # Create a real .pixi directory somewhere, then symlink to it from canonical
+        real_pixi = self.tmpdir / "real-pixi-env"
+        real_pixi.mkdir()
+        (real_pixi / "marker").write_text("pixi-data")
+        pixi_link = self.canonical_target / ".pixi"
+        if pixi_link.exists() or pixi_link.is_symlink():
+            pixi_link.unlink()
+        pixi_link.symlink_to(real_pixi)
+
+        merge_branch_and_continue(self.paths, self.variant_id)
+        new_pixi = self.canonical_target / ".pixi"
+        self.assertTrue(new_pixi.exists() or new_pixi.is_symlink(),
+                        ".pixi should exist after B&C even when source was a symlink")
+
+
 class TestMergeLock(_MergeTestBase):
     """_MergeLock prevents concurrent merges and cleans up properly."""
 

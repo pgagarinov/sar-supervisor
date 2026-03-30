@@ -827,6 +827,12 @@ def merge_winner_takes_all(
         backup_dir.mkdir(parents=True, exist_ok=True)
         backup_state = capture_code_state(target_repo, backup_dir)
 
+        # Save pre-merge HEAD so rollback can restore it
+        pre_merge_meta = backup_dir / "pre-merge-meta.json"
+        pre_merge_meta.write_text(json.dumps({
+            "head": backup_state.get("head"),
+        }), encoding="utf-8")
+
         # Fetch from winning clone and reset canonical
         fetch_head = git_fetch(target_repo, target_clone, "main")
         if not fetch_head:
@@ -870,6 +876,12 @@ def merge_cherry_pick(
         backup_dir.mkdir(parents=True, exist_ok=True)
         backup_state = capture_code_state(target_repo, backup_dir)
 
+        # Save pre-merge HEAD so rollback can restore it
+        pre_merge_meta = backup_dir / "pre-merge-meta.json"
+        pre_merge_meta.write_text(json.dumps({
+            "head": backup_state.get("head"),
+        }), encoding="utf-8")
+
         # Get baseline commit
         baseline_result = _git_cmd(target_repo, "rev-parse", "baseline")
         baseline_head = baseline_result.stdout.strip() if baseline_result.returncode == 0 else None
@@ -883,6 +895,10 @@ def merge_cherry_pick(
             target_clone = Path(f"{target_repo}--{variant_id}")
             if not target_clone.exists():
                 continue
+
+            # Fetch objects from clone into canonical so cherry-pick can resolve commits
+            from harness_core.git_utils import git_fetch as _git_fetch
+            _git_fetch(target_repo, target_clone, "main")
 
             # Find commits since baseline in this variant's clone
             commits = _log_range(target_clone, baseline_head, "HEAD")
@@ -947,7 +963,12 @@ def merge_branch_and_continue(
         if pixi_link.is_symlink():
             pixi_link.unlink()
         pixi_source = backup_path / ".pixi"
-        if pixi_source.exists() and not pixi_source.is_symlink():
+        if pixi_source.is_symlink():
+            # Source was a symlink — resolve its target and re-create symlink
+            resolved = pixi_source.resolve()
+            if resolved.exists():
+                pixi_link.symlink_to(resolved)
+        elif pixi_source.exists():
             pixi_link.symlink_to(pixi_source.resolve())
 
         # Update baseline tag
@@ -962,19 +983,40 @@ def merge_branch_and_continue(
 
 
 def rollback_merge(paths: RepoPaths) -> dict[str, Any]:
-    """Rollback the last merge by restoring from backup."""
+    """Rollback the last merge by restoring from backup.
+
+    For WTA/cherry-pick merges: resets HEAD to pre-merge commit, then
+    restores the working tree from the code-state backup.
+    For B&C merges: moves the backup directory back to canonical location.
+    Always cleans up the backup after successful restore.
+    """
+    import shutil as _shutil
+    from harness_core.git_utils import git_command as _git_cmd
+
     target_repo = _resolve_target_repo(paths.supervised_repo)
 
-    # Check for code-state backup
+    # Check for code-state backup (WTA / cherry-pick)
     backup_dir = paths.snapshots_dir / "pre-merge-backup"
     if backup_dir.exists():
+        # Read pre-merge HEAD from metadata
+        pre_merge_meta = backup_dir / "pre-merge-meta.json"
+        if pre_merge_meta.exists():
+            meta = json.loads(pre_merge_meta.read_text(encoding="utf-8"))
+            original_head = meta.get("head")
+            if original_head:
+                _git_cmd(target_repo, "reset", "--hard", original_head)
+                _git_cmd(target_repo, "tag", "-f", "baseline", original_head)
+
         result = restore_code_state(target_repo, backup_dir)
+
+        # Clean up backup so a second rollback correctly fails
+        _shutil.rmtree(backup_dir)
+
         return {"method": "restore", "result": result}
 
     # Check for branch-and-continue backup (moved directory)
     backup_path = Path(f"{target_repo}.pre-merge-backup")
     if backup_path.exists():
-        import shutil as _shutil
         if target_repo.exists():
             _shutil.rmtree(target_repo)
         backup_path.rename(target_repo)
@@ -984,20 +1026,23 @@ def rollback_merge(paths: RepoPaths) -> dict[str, Any]:
 
 
 def list_researcher_variants(paths: RepoPaths) -> list[dict[str, Any]]:
-    """List all researcher variants (running and stopped) from PID files."""
+    """List all researcher variants (running, stopped, and parked) from PID and parked files."""
     variants: list[dict[str, Any]] = []
     if not paths.state_dir.exists():
         return variants
 
+    seen_ids: set[str] = set()
     skill_name = paths.skill_name
     prefix = f"{skill_name}--"
     suffix = ".pid"
 
+    # Scan PID files for running/stopped variants
     for pid_file in sorted(paths.state_dir.glob(f"{prefix}*{suffix}")):
         name = pid_file.stem
         if not name.startswith(prefix):
             continue
         var_id = name[len(prefix):]
+        seen_ids.add(var_id)
 
         try:
             pid = int(pid_file.read_text(encoding="utf-8").strip())
@@ -1022,6 +1067,28 @@ def list_researcher_variants(paths: RepoPaths) -> list[dict[str, Any]]:
             "prompt": state.get("prompt") if state else None,
             "log_path": state.get("log_path") if state else None,
             "config_dir": state.get("config_dir") if state else None,
+        })
+
+    # Scan parked-*.json files for parked variants without PID files
+    for parked_file in sorted(paths.state_dir.glob("parked-*.json")):
+        var_id = parked_file.stem.removeprefix("parked-")
+        if var_id in seen_ids:
+            continue
+        seen_ids.add(var_id)
+
+        try:
+            parked = json.loads(parked_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        variants.append({
+            "variant_id": var_id,
+            "pid": None,
+            "running": False,
+            "started_at": parked.get("parked_at"),
+            "prompt": None,
+            "log_path": None,
+            "config_dir": parked.get("config_dir"),
         })
 
     return variants

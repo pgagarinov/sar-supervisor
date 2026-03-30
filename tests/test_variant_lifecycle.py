@@ -412,6 +412,26 @@ class TestListResearcherVariants(_VariantTestBase):
             self.assertFalse(v["running"], f"Variant {v['variant_id']} should be stopped")
 
 
+class TestListResearcherVariantsIncludesParked(_VariantTestBase):
+    """list_researcher_variants must include parked variants (not just PID-based ones)."""
+
+    def test_parked_variants_included_in_list(self) -> None:
+        """Parked variants (with parked-*.json but no PID file) appear in list."""
+        # Write a parked state file (no PID file exists for this variant)
+        parked = {
+            "variant_id": "rv-parked-only",
+            "status": "parked",
+            "parked_at": "2026-01-01T00:00:00Z",
+            "metrics": {"total": 20, "passed": 18, "failed": 2},
+        }
+        (self.state_dir / "parked-rv-parked-only.json").write_text(json.dumps(parked))
+
+        variants = list_researcher_variants(self.paths)
+        variant_ids = [v["variant_id"] for v in variants]
+        self.assertIn("rv-parked-only", variant_ids,
+                      "Parked variants should be included in list_researcher_variants")
+
+
 class TestListParkedVariants(_VariantTestBase):
     """list_parked_variants returns parked variants with metrics."""
 

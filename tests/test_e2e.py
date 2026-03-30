@@ -20,7 +20,11 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.e2e, pytest.mark.timeout(900)]  # 15 min per E2E test
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.timeout(900),  # 15 min per E2E test
+    pytest.mark.xdist_group("e2e-serial"),  # E2E tests share real filesystem state — run on one worker
+]
 
 # Fail fast if required env vars are not set
 _CLAUDE_CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR", "")

@@ -281,6 +281,41 @@ class TestMergeAfterCanonicalDiverged(_EdgeCaseTestBase):
         )
 
 
+class TestRollbackAfterDivergedCanonical(_EdgeCaseTestBase):
+    """Rollback after WTA merge on a diverged canonical restores the diverged HEAD."""
+
+    def test_rollback_restores_diverged_head(self) -> None:
+        """After WTA merge + rollback, HEAD matches the pre-merge diverged state."""
+        from supervisor_harness.supervisor import merge_winner_takes_all, rollback_merge
+
+        # Diverge canonical with a manual commit
+        diverged_head = _commit_file(
+            self.target, "manual.txt", "manual change", "manual divergence",
+        )
+
+        # Create target clone and make a variant commit
+        target_clone = _create_target_clone(self.target, self.variant_id)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t"],
+            cwd=target_clone, check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"],
+            cwd=target_clone, check=True, capture_output=True,
+        )
+        _commit_file(target_clone, "variant.txt", "variant", "variant commit")
+
+        # WTA merge
+        merge_winner_takes_all(self.paths, self.variant_id)
+
+        # Rollback should restore to the diverged HEAD (pre-merge)
+        rollback_merge(self.paths)
+        from harness_core.git_utils import git_head
+        restored_head = git_head(self.target)
+        self.assertEqual(diverged_head, restored_head,
+                         "Rollback should restore the diverged pre-merge HEAD")
+
+
 class TestCherryPickEmptyRange(_EdgeCaseTestBase):
     """Cherry-pick with no commits since baseline."""
 
