@@ -488,6 +488,49 @@ class TestBranchAndContinuePixiSymlink(_MergeTestBase):
                         ".pixi should exist after B&C even when source was a symlink")
 
 
+class TestBranchAndContinuePixiDirInClone(_MergeTestBase):
+    """B&C merge must handle case where clone has a real .pixi directory (not a symlink)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        _commit_file(self.target_clone, "bc.txt", "v", "bc commit")
+
+    def test_pixi_recreated_when_clone_has_real_pixi_dir(self) -> None:
+        """After B&C, .pixi is re-symlinked even when clone had a real .pixi dir.
+
+        Real scenario: canonical has .pixi as symlink (pixi environment).
+        Clone gets a real .pixi dir when pixi installs into it.
+        After B&C rename, canonical/.pixi is the clone's real dir.
+        The old code only removed symlinks, so symlink_to() failed with
+        FileExistsError.
+        """
+        # Canonical has .pixi as a symlink pointing to a real pixi env
+        real_pixi = self.tmpdir / "real-pixi-env"
+        real_pixi.mkdir()
+        (real_pixi / "marker").write_text("canonical-pixi")
+        canonical_pixi = self.canonical_target / ".pixi"
+        if canonical_pixi.exists() or canonical_pixi.is_symlink():
+            if canonical_pixi.is_dir() and not canonical_pixi.is_symlink():
+                import shutil
+                shutil.rmtree(canonical_pixi)
+            else:
+                canonical_pixi.unlink()
+        canonical_pixi.symlink_to(real_pixi)
+
+        # Clone has .pixi as a REAL directory (not symlink) — pixi created it
+        clone_pixi = self.target_clone / ".pixi"
+        clone_pixi.mkdir(exist_ok=True)
+        (clone_pixi / "marker").write_text("clone-pixi")
+
+        # After B&C: clone becomes canonical, canonical becomes backup.
+        # canonical/.pixi is now the clone's real dir (not a symlink).
+        # The code must remove this real dir before creating the symlink.
+        merge_branch_and_continue(self.paths, self.variant_id)
+        new_pixi = self.canonical_target / ".pixi"
+        self.assertTrue(new_pixi.exists() or new_pixi.is_symlink(),
+                        ".pixi should exist after B&C when clone had real .pixi dir")
+
+
 class TestMergeLock(_MergeTestBase):
     """_MergeLock prevents concurrent merges and cleans up properly."""
 

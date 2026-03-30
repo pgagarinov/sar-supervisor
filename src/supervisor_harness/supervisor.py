@@ -960,8 +960,12 @@ def merge_branch_and_continue(
 
         # Re-symlink .pixi (may point to old location)
         pixi_link = target_repo / ".pixi"
-        if pixi_link.is_symlink():
-            pixi_link.unlink()
+        if pixi_link.is_symlink() or pixi_link.exists():
+            if pixi_link.is_dir() and not pixi_link.is_symlink():
+                import shutil as _shutil2
+                _shutil2.rmtree(pixi_link)
+            else:
+                pixi_link.unlink()
         pixi_source = backup_path / ".pixi"
         if pixi_source.is_symlink():
             # Source was a symlink — resolve its target and re-create symlink
