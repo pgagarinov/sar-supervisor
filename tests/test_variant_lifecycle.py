@@ -463,6 +463,68 @@ class TestListParkedVariants(_VariantTestBase):
             self.assertIsNotNone(item["metrics"])
 
 
+class TestLaunchSpecIncludesTargetRepo(_VariantTestBase):
+    """start_researcher_variant must set TARGET_REPO to the target clone path in the launch command."""
+
+    def test_launch_command_contains_target_repo_pointing_to_clone(self) -> None:
+        """TARGET_REPO env var in launch command must point to the target CLONE, not canonical."""
+        _real_popen = subprocess.Popen
+        mock_process = MagicMock()
+        mock_process.pid = 12345
+        mock_process.__enter__ = MagicMock(return_value=mock_process)
+        mock_process.__exit__ = MagicMock(return_value=False)
+        mock_process.communicate = MagicMock(return_value=(b"", b""))
+        mock_process.returncode = 0
+        mock_process.stdout = b""
+        mock_process.stderr = b""
+
+        def _popen_side_effect(*args: Any, **kwargs: Any) -> Any:
+            cmd = args[0] if args else kwargs.get("args", [])
+            if isinstance(cmd, list) and cmd[0] == "/bin/bash":
+                return mock_process
+            return _real_popen(*args, **kwargs)
+
+        with patch("subprocess.Popen", side_effect=_popen_side_effect):
+            launch_spec, pid, vid = start_researcher_variant(
+                self.paths, self.variant_id, clean_first=False,
+            )
+
+        # The launch command must contain TARGET_REPO pointing to the clone
+        target_clone_path = f"{self.target}--{self.variant_id}"
+        self.assertIn("TARGET_REPO=", launch_spec.command,
+                       "Launch command must set TARGET_REPO env var")
+        self.assertIn(target_clone_path, launch_spec.command,
+                       f"TARGET_REPO must point to clone {target_clone_path}, not canonical {self.target}")
+
+    def test_launch_command_contains_canonical_target(self) -> None:
+        """CANONICAL_TARGET env var must point to the original (non-clone) target."""
+        _real_popen = subprocess.Popen
+        mock_process = MagicMock()
+        mock_process.pid = 12345
+        mock_process.__enter__ = MagicMock(return_value=mock_process)
+        mock_process.__exit__ = MagicMock(return_value=False)
+        mock_process.communicate = MagicMock(return_value=(b"", b""))
+        mock_process.returncode = 0
+        mock_process.stdout = b""
+        mock_process.stderr = b""
+
+        def _popen_side_effect(*args: Any, **kwargs: Any) -> Any:
+            cmd = args[0] if args else kwargs.get("args", [])
+            if isinstance(cmd, list) and cmd[0] == "/bin/bash":
+                return mock_process
+            return _real_popen(*args, **kwargs)
+
+        with patch("subprocess.Popen", side_effect=_popen_side_effect):
+            launch_spec, pid, vid = start_researcher_variant(
+                self.paths, self.variant_id, clean_first=False,
+            )
+
+        self.assertIn("CANONICAL_TARGET=", launch_spec.command,
+                       "Launch command must set CANONICAL_TARGET env var")
+        self.assertIn(str(self.target), launch_spec.command,
+                       f"CANONICAL_TARGET must contain canonical path {self.target}")
+
+
 class TestCLIVariantStartKwargsMatch(unittest.TestCase):
     """Regression: CLI must only pass kwargs that start_researcher_variant accepts."""
 
