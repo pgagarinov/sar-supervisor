@@ -15,7 +15,7 @@ primary = "{tmp}/rag-eval-report.json"
 
 [reports.metric]
 report = "primary"
-field = "recall_at_5"
+field = "mrr"
 direction = "maximize"
 
 [log]
