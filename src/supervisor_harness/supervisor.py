@@ -958,7 +958,7 @@ def merge_branch_and_continue(
         # Move winner to canonical location
         target_clone.rename(target_repo)
 
-        # Re-symlink .pixi (may point to old location)
+        # Re-symlink .pixi (may point to old location after rename)
         pixi_link = target_repo / ".pixi"
         if pixi_link.is_symlink() or pixi_link.exists():
             if pixi_link.is_dir() and not pixi_link.is_symlink():
@@ -968,12 +968,18 @@ def merge_branch_and_continue(
                 pixi_link.unlink()
         pixi_source = backup_path / ".pixi"
         if pixi_source.is_symlink():
-            # Source was a symlink — resolve its target and re-create symlink
             resolved = pixi_source.resolve()
             if resolved.exists():
                 pixi_link.symlink_to(resolved)
         elif pixi_source.exists():
             pixi_link.symlink_to(pixi_source.resolve())
+
+        # Fallback: if .pixi still doesn't exist, run pixi install
+        if not pixi_link.exists() and not pixi_link.is_symlink():
+            subprocess.run(
+                ["pixi", "install"],
+                cwd=target_repo, capture_output=True, timeout=120,
+            )
 
         # Update baseline tag
         _git_cmd(target_repo, "tag", "-f", "baseline", "HEAD")

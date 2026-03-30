@@ -495,6 +495,33 @@ class TestBranchAndContinuePixiDirInClone(_MergeTestBase):
         super().setUp()
         _commit_file(self.target_clone, "bc.txt", "v", "bc commit")
 
+    def test_pixi_fallback_when_no_pixi_in_either(self) -> None:
+        """After B&C with no .pixi in canonical or clone, pixi install is called as fallback."""
+        import shutil as _shutil
+        # Remove .pixi from both canonical and clone
+        for path in [self.canonical_target / ".pixi", self.target_clone / ".pixi"]:
+            if path.is_dir() and not path.is_symlink():
+                _shutil.rmtree(path)
+            elif path.is_symlink() or path.exists():
+                path.unlink()
+
+        # Patch only the fallback subprocess.run call in supervisor module
+        _real_run = subprocess.run
+        pixi_calls: list = []
+
+        def _capturing_run(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if isinstance(cmd, list) and len(cmd) > 0 and cmd[0] == "pixi":
+                pixi_calls.append(cmd)
+                return subprocess.CompletedProcess(cmd, 0)
+            return _real_run(*args, **kwargs)
+
+        with unittest.mock.patch("supervisor_harness.supervisor.subprocess.run", side_effect=_capturing_run):
+            merge_branch_and_continue(self.paths, self.variant_id)
+
+        self.assertGreater(len(pixi_calls), 0,
+                           "pixi install should be called when .pixi missing from both sources")
+
     def test_pixi_recreated_when_clone_has_real_pixi_dir(self) -> None:
         """After B&C, .pixi is re-symlinked even when clone had a real .pixi dir.
 
