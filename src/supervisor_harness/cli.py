@@ -472,18 +472,18 @@ def _cmd_prompt_diff(args: argparse.Namespace) -> int:
 
 def _cmd_prompt_delete(args: argparse.Namespace) -> int:
     paths = _paths_from_args(args)
-    claude_dir = paths.supervised_repo / ".claude"
-    target = claude_dir / args.path
-    if not target.exists():
-        print(f"not found: {args.path}", file=sys.stderr)
+    from harness_core.prompt_editor import delete_asset
+    try:
+        record = delete_asset(
+            claude_dir=paths.claude_dir,
+            repo_path=paths.supervised_repo,
+            name=args.path,
+            log_dir=paths.state_dir,
+        )
+    except FileNotFoundError as e:
+        print(str(e), file=sys.stderr)
         return 1
-    target.unlink()
-    print(f"deleted: {args.path}")
-    subprocess.run(["git", "add", str(target)], cwd=paths.supervised_repo, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", f"dot-claude-delete: remove {args.path}"],
-        cwd=paths.supervised_repo, capture_output=True,
-    )
+    print(f"deleted: {record['name']}")
     return 0
 
 
