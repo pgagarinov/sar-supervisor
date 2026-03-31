@@ -167,6 +167,9 @@ class _MergeTestBase(unittest.TestCase):
             report_map={},
             config_dirs=(Path("~/.claude").expanduser(),),
             config={},
+            project_id=f"test-{self.__class__.__name__.lower()}",
+            project_dir=self.tmpdir / "project",
+            clone_dir=self.tmpdir / "clones",
         )
 
 

@@ -52,6 +52,9 @@ def _make_paths(root: Path, config_dirs: tuple[Path, ...]) -> RepoPaths:
         config={
             "supervised": {"default_prompt": "/my-skill", "config_dirs": []},
         },
+        project_id="test-profile",
+        project_dir=root / "project",
+        clone_dir=root / "clones",
     )
 
 

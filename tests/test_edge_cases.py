@@ -101,7 +101,11 @@ class _EdgeCaseTestBase(unittest.TestCase):
         # Workspace (supervisor)
         self.workspace = self.tmpdir / "sar-supervisor"
         self.workspace.mkdir(parents=True, exist_ok=True)
-        self.state_dir = self.workspace / ".supervisor"
+
+        # Project dirs — match what RepoPaths.discover() will compute
+        self._project_id = f"test-{self.__class__.__name__.lower()}"
+        project_dir = self.tmpdir / "projects" / self._project_id
+        self.state_dir = project_dir / "state"
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.snapshots_dir = self.state_dir / "snapshots"
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
@@ -128,10 +132,14 @@ class _EdgeCaseTestBase(unittest.TestCase):
         self.profile_a.mkdir()
         self.profile_b.mkdir()
 
-        # Set CLAUDE_CONFIG_DIRS for entire test duration
+        # Set env vars for entire test duration
         self._config_dirs_str = f"{self.profile_a}:{self.profile_b}"
         self._env_patcher = patch.dict(
-            "os.environ", {"CLAUDE_CONFIG_DIRS": self._config_dirs_str},
+            "os.environ", {
+                "CLAUDE_CONFIG_DIRS": self._config_dirs_str,
+                "SAR_PROJECTS_ROOT": str(self.tmpdir / "projects"),
+                "SAR_PROJECT_ID": self._project_id,
+            },
         )
         self._env_patcher.start()
 
@@ -142,14 +150,10 @@ class _EdgeCaseTestBase(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._env_patcher.stop()
-        # Clean up clones in /tmp
-        for p in Path("/tmp").glob(f"sar-research-loop--{self.variant_id}*"):
-            if p.exists():
-                shutil.rmtree(p)
-        for suffix in (f"--{self.variant_id}", ".pre-merge-backup"):
-            p = Path(f"{self.target}{suffix}")
-            if p.exists():
-                shutil.rmtree(p)
+        # Clean up any pre-merge-backup alongside the target
+        backup = Path(f"{self.target}.pre-merge-backup")
+        if backup.exists():
+            shutil.rmtree(backup)
         self._tmpdir.cleanup()
 
 
@@ -190,7 +194,7 @@ class TestParkDirtyTarget(_EdgeCaseTestBase):
 
     def test_park_with_dirty_target(self) -> None:
         """Parking auto-commits uncommitted files in target clone."""
-        target_clone = _create_target_clone(self.target, self.variant_id)
+        target_clone = _create_target_clone(self.target, self.variant_id, clone_base=self.paths.clone_dir)
         subprocess.run(
             ["git", "config", "user.email", "t@t"],
             cwd=target_clone, check=True, capture_output=True,

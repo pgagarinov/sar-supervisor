@@ -77,6 +77,9 @@ def _make_paths(
         report_map={"primary": report_primary},
         config_dirs=(Path("~/.claude").expanduser(),),
         config=MINIMAL_CONFIG,
+        project_id="test-harness",
+        project_dir=root / "project",
+        clone_dir=root / "clones",
     )
 
 

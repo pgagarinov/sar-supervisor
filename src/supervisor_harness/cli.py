@@ -350,6 +350,89 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_results_tsv(path: Path) -> dict[str, Any] | None:
+    """Parse results.tsv into a summary dict."""
+    if not path.exists():
+        return None
+    lines = [l for l in path.read_text(encoding="utf-8").splitlines()
+             if l.strip() and not l.startswith("commit")]
+    kept = sum(1 for l in lines if "\tkeep" in l or "\tkept" in l)
+    discarded = sum(1 for l in lines if "\tdiscard" in l)
+    last_3: list[dict[str, Any]] = []
+    for i, line in enumerate(lines[-3:], start=max(1, len(lines) - 2)):
+        parts = line.split("\t")
+        last_3.append({
+            "n": i,
+            "commit": parts[0][:7] if parts else "",
+            "description": parts[1] if len(parts) > 1 else "",
+            "metric": float(parts[3]) if len(parts) > 3 and parts[3].replace(".", "").replace("-", "").isdigit() else 0,
+            "status": parts[6] if len(parts) > 6 else parts[2] if len(parts) > 2 else "",
+        })
+    return {"total": len(lines), "kept": kept, "discarded": discarded, "last_3": last_3}
+
+
+def _cmd_status_tree(args: argparse.Namespace) -> int:
+    """Collect all supervisor/researcher status in one JSON blob."""
+    paths = _paths_from_args(args)
+
+    # Main researcher
+    state = load_state(paths)
+    pid = read_pid(paths)
+    running = bool(pid and process_running(pid))
+    if pid and not running:
+        cleanup_state(paths)
+        pid = None
+        state = None
+
+    # All variants
+    variants = list_researcher_variants(paths)
+
+    # Main report
+    main_report = None
+    for rp in paths.report_paths:
+        if rp.exists():
+            try:
+                main_report = json.loads(rp.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+            break
+
+    # Main runs
+    main_runs = _parse_results_tsv(paths.supervised_repo / "results.tsv")
+
+    # Per-variant augmentation
+    for var in variants:
+        vid = var["variant_id"]
+        rv_results = paths.clone_dir / f"{paths.supervised_repo.name}--{vid}" / "results.tsv"
+        var["runs"] = _parse_results_tsv(rv_results)
+        rv_report = paths.project_dir / "reports" / f"rag-eval-report--{vid}.json"
+        if rv_report.exists():
+            try:
+                var["target"] = json.loads(rv_report.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                var["target"] = None
+        else:
+            var["target"] = None
+
+    tree = {
+        "now": datetime.now(timezone.utc).isoformat(),
+        "project_id": paths.project_id,
+        "supervisor_profile": state.get("config_dir") if state else None,
+        "supervisor_started_at": state.get("started_at") if state else None,
+        "main": {
+            "pid": pid,
+            "running": running,
+            "profile": state.get("config_dir") if state else None,
+            "started_at": state.get("started_at") if state else None,
+            "target": main_report,
+            "runs": main_runs,
+        },
+        "variants": variants,
+    }
+    print(json.dumps(tree, indent=2))
+    return 0
+
+
 def _cmd_restore(args: argparse.Namespace) -> int:
     paths = _paths_from_args(args)
     try:
@@ -785,6 +868,10 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("status", parents=[common])
     status_parser.add_argument("--json", action="store_true")
     status_parser.set_defaults(func=_cmd_status)
+
+    status_tree_parser = subparsers.add_parser("status-tree", parents=[common])
+    status_tree_parser.add_argument("--json", action="store_true")
+    status_tree_parser.set_defaults(func=_cmd_status_tree)
 
     restore_parser = subparsers.add_parser("restore", parents=[common])
     restore_parser.add_argument("identifier", help="Snapshot ID prefix, full path, or 'best'")

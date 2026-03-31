@@ -28,9 +28,20 @@ def load_harness_config(workspace: Path) -> dict[str, Any]:
         return tomllib.load(f)
 
 
-def _resolve_path_template(template: str, project_name: str) -> str:
-    """Replace {tmp} and {name} placeholders in path templates."""
-    return template.replace("{tmp}", "/tmp").replace("{name}", project_name)
+def _project_dir() -> Path:
+    """Resolve the project directory from SAR_PROJECTS_ROOT / SAR_PROJECT_ID."""
+    root = Path(os.environ.get("SAR_PROJECTS_ROOT", "/tmp/sar-projects"))
+    project_id = os.environ.get("SAR_PROJECT_ID", "default")
+    return root / project_id
+
+
+def _resolve_path_template(template: str, project_name: str, project: Path | None = None) -> str:
+    """Replace {tmp} and {name} placeholders in path templates.
+
+    {tmp} resolves to the project's reports directory (not /tmp).
+    """
+    tmp = str(project / "reports") if project else "/tmp"
+    return template.replace("{tmp}", tmp).replace("{name}", project_name)
 
 
 def my_profile_index(config_dirs: tuple[Path, ...]) -> int:
@@ -76,6 +87,9 @@ class RepoPaths:
     report_map: dict[str, Path]
     config_dirs: tuple[Path, ...]
     config: dict[str, Any]
+    project_id: str = "default"
+    project_dir: Path = Path("/tmp/sar-projects/default")
+    clone_dir: Path = Path("/tmp/sar-projects/default/clones")
 
     @classmethod
     def discover(
@@ -116,6 +130,14 @@ class RepoPaths:
             )
         config_dirs = tuple(Path(d).expanduser() for d in config_dirs_env.split(":") if d)
 
+        # Project isolation: all state under one directory
+        proj_dir = _project_dir()
+        proj_id = os.environ.get("SAR_PROJECT_ID", "default")
+        state_dir = proj_dir / "state"
+        clone_dir_path = proj_dir / "clones"
+        log_dir = proj_dir / "logs"
+        report_dir = proj_dir / "reports"
+
         # Build report paths from config
         reports_cfg = config.get("reports", {})
         report_map: dict[str, Path] = {}
@@ -124,7 +146,7 @@ class RepoPaths:
             if key == "metric":
                 continue
             if isinstance(template, str):
-                resolved = Path(_resolve_path_template(template, project_name))
+                resolved = Path(_resolve_path_template(template, project_name, proj_dir))
                 report_map[key] = resolved
                 report_paths_list.append(resolved)
 
@@ -132,16 +154,9 @@ class RepoPaths:
         log_cfg = config.get("log", {})
         log_template = log_cfg.get("path", "{tmp}/cc-{name}.log")
         if variant_id and not log_path:
-            resolved_log = Path(
-                _resolve_path_template(log_template, project_name)
-                .replace(".log", f"--{variant_id}.log")
-            )
+            resolved_log = log_dir / f"cc-{project_name}--{variant_id}.log"
         else:
-            resolved_log = log_path or Path(
-                _resolve_path_template(log_template, project_name)
-            )
-
-        state_dir = workspace / ".supervisor"
+            resolved_log = log_path or (log_dir / f"cc-{project_name}.log")
 
         # When variant_id is set, namespace PID and state paths
         pid_name = f"{skill_name}--{variant_id}" if variant_id else skill_name
@@ -167,6 +182,9 @@ class RepoPaths:
             report_map=report_map,
             config_dirs=config_dirs,
             config=config,
+            project_id=proj_id,
+            project_dir=proj_dir,
+            clone_dir=clone_dir_path,
         )
 
     def clean_targets(self, include_log: bool) -> tuple[Path, ...]:
@@ -225,6 +243,9 @@ def build_launch_spec(
         env_prefix += f"TARGET_REPO={shlex.quote(str(target_repo))} "
     if canonical_target:
         env_prefix += f"CANONICAL_TARGET={shlex.quote(str(canonical_target))} "
+    # Pass project isolation env vars to child
+    env_prefix += f"SAR_PROJECT_ID={shlex.quote(paths.project_id)} "
+    env_prefix += f"SAR_PROJECTS_ROOT={shlex.quote(str(paths.project_dir.parent))} "
 
     resolve_dir = pixi_resolve_dir or paths.supervised_repo
     command = (

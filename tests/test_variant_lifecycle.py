@@ -107,14 +107,16 @@ class _VariantTestBase(unittest.TestCase):
         # Workspace (supervisor)
         self.workspace = self.tmpdir / "sar-supervisor"
         self.workspace.mkdir(parents=True, exist_ok=True)
-        self.state_dir = self.workspace / ".supervisor"
+
+        # Project dirs — match what RepoPaths.discover() will compute
+        self._project_id = f"test-{self.__class__.__name__.lower()}"
+        project_dir = self.tmpdir / "projects" / self._project_id
+        self.state_dir = project_dir / "state"
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.snapshots_dir = self.state_dir / "snapshots"
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
-
-        # Clone dir inside tmpdir — no /tmp/ collisions between parallel tests
-        self.clone_dir = self.tmpdir / "clones"
-        self.clone_dir.mkdir()
+        self.clone_dir = project_dir / "clones"
+        self.clone_dir.mkdir(parents=True, exist_ok=True)
 
         # Write minimal harness.toml
         harness_toml = self.workspace / "harness.toml"
@@ -130,8 +132,6 @@ class _VariantTestBase(unittest.TestCase):
             '[reports.metric]\nreport = "primary"\nfield = "failed"\n'
             '[log]\n'
             f'path = "{self.tmpdir}/cc-test.log"\n'
-            '[variants]\n'
-            f'clone_dir = "{self.clone_dir}"\n'
         )
 
         # Profile dirs
@@ -140,11 +140,15 @@ class _VariantTestBase(unittest.TestCase):
         self.profile_a.mkdir()
         self.profile_b.mkdir()
 
-        # Set CLAUDE_CONFIG_DIRS for entire test duration so internal
+        # Set env vars for entire test duration so internal
         # RepoPaths.discover() calls work
         self._config_dirs_str = f"{self.profile_a}:{self.profile_b}"
         self._env_patcher = patch.dict(
-            "os.environ", {"CLAUDE_CONFIG_DIRS": self._config_dirs_str},
+            "os.environ", {
+                "CLAUDE_CONFIG_DIRS": self._config_dirs_str,
+                "SAR_PROJECTS_ROOT": str(self.tmpdir / "projects"),
+                "SAR_PROJECT_ID": self._project_id,
+            },
         )
         self._env_patcher.start()
 

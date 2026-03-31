@@ -46,6 +46,7 @@ researcher-dot-claude-history = "PYTHONPATH=src python -m supervisor_harness.cli
 researcher-restore = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli restore", depends-on = [] }
 researcher-revert-safe = "PYTHONPATH=src python -m supervisor_harness.cli revert-safe"
 researcher-variant = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli variant", depends-on = [] }
+status-tree = "PYTHONPATH=src python -m supervisor_harness.cli status-tree --json"
 # Self management: <action> pattern
 clean = "PYTHONPATH=src python -m supervisor_harness.cli clean --include-log"
 

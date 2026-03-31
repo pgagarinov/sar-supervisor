@@ -584,17 +584,16 @@ def start_researcher_variant(
     """
     var_cfg = paths.config.get("variants", {})
     prefix = var_cfg.get("id_prefix", "rv")
-    clone_base = Path(var_cfg["clone_dir"]) if "clone_dir" in var_cfg else None
 
     if variant_id is None:
         variant_id = _generate_variant_id(paths, prefix=prefix)
 
-    # Create isolated researcher clone
-    researcher_clone = _create_variant_clone(paths.supervised_repo, variant_id, clone_base=clone_base)
+    # Create isolated researcher clone (in project's clone dir)
+    researcher_clone = _create_variant_clone(paths.supervised_repo, variant_id, clone_base=paths.clone_dir)
 
-    # Create isolated target clone
+    # Create isolated target clone (in project's clone dir)
     target_repo = _resolve_target_repo(paths.supervised_repo)
-    target_clone = _create_target_clone(target_repo, variant_id, clone_base=clone_base)
+    target_clone = _create_target_clone(target_repo, variant_id, clone_base=paths.clone_dir)
 
     # If a variant SKILL.md was provided, apply it to the clone
     if variant_path and variant_path.exists():
@@ -681,12 +680,8 @@ def park_researcher_variant(
     # Stop the process
     stop_researcher_variant(paths, variant_id)
 
-    var_cfg = paths.config.get("variants", {})
-    clone_base = Path(var_cfg["clone_dir"]) if "clone_dir" in var_cfg else None
-
     target_repo = _resolve_target_repo(paths.supervised_repo)
-    target_base = clone_base or target_repo.parent
-    target_clone = target_base / f"{target_repo.name}--{variant_id}"
+    target_clone = paths.clone_dir / f"{target_repo.name}--{variant_id}"
 
     # Auto-commit any uncommitted target changes
     if target_clone.exists():
@@ -702,8 +697,7 @@ def park_researcher_variant(
 
     # Read final metrics
     metrics: dict[str, Any] | None = None
-    researcher_base = clone_base or Path("/tmp")
-    report_path = researcher_base / f"rag-eval-report--{variant_id}.json"
+    report_path = paths.project_dir / "reports" / f"rag-eval-report--{variant_id}.json"
     if not report_path.exists():
         report_path = Path("/tmp/rag-eval-report.json")
     if report_path.exists():
@@ -711,7 +705,7 @@ def park_researcher_variant(
         metrics = report_summary(report_path)
 
     # Read iteration summary from results.tsv
-    researcher_clone_path = researcher_base / f"{paths.supervised_repo.name}--{variant_id}"
+    researcher_clone_path = paths.clone_dir / f"{paths.supervised_repo.name}--{variant_id}"
     results_path = researcher_clone_path / "results.tsv"
     if not results_path.exists():
         results_path = paths.supervised_repo / "results.tsv"
@@ -769,9 +763,7 @@ def discard_researcher_variant(paths: RepoPaths, variant_id: str) -> None:
     """Stop and destroy everything for a researcher variant."""
     stop_researcher_variant(paths, variant_id)
     target_repo = _resolve_target_repo(paths.supervised_repo)
-    var_cfg = paths.config.get("variants", {})
-    clone_base = Path(var_cfg["clone_dir"]) if "clone_dir" in var_cfg else None
-    _remove_variant_clones(paths.supervised_repo, target_repo, variant_id, clone_base=clone_base)
+    _remove_variant_clones(paths.supervised_repo, target_repo, variant_id, clone_base=paths.clone_dir)
     # Remove parked state if any
     parked_path = paths.state_dir / f"parked-{variant_id}.json"
     if parked_path.exists():
