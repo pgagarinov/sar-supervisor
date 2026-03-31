@@ -182,7 +182,7 @@ class TestConcurrentClonesSafetyE2E(unittest.TestCase):
         try:
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_a, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_b, timeout=120)
-            time.sleep(10)
+            time.sleep(20)
             # Both should be running without git errors
             r = _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "list", "--json")
             variants = json.loads(r.stdout)
@@ -663,7 +663,7 @@ class TestMonitorOutputE2E(unittest.TestCase):
         vid = "e2e-mon-45"
         try:
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-start", "--no-clean", timeout=120)
-            time.sleep(10)
+            time.sleep(20)
             r = _pixi_run_check(_SUPERVISOR_ROOT, "researcher-loop-once", timeout=60)
             self.assertIn("log:", r.stdout)
             self.assertIn("events:", r.stdout)

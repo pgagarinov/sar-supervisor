@@ -637,6 +637,7 @@ def start_researcher_variant(
         variant_id=variant_id,
         target_repo=target_clone,
         canonical_target=target_repo,
+        pixi_resolve_dir=paths.supervised_repo,
     )
     var_paths.state_dir.mkdir(parents=True, exist_ok=True)
     launch_spec.log_path.parent.mkdir(parents=True, exist_ok=True)

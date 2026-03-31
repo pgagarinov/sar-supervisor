@@ -196,6 +196,7 @@ def build_launch_spec(
     variant_id: str | None = None,
     target_repo: Path | None = None,
     canonical_target: Path | None = None,
+    pixi_resolve_dir: Path | None = None,
 ) -> LaunchSpec:
     resolved_claude = claude_bin or shutil.which("claude") or "claude"
     resolved_pixi = pixi_bin or shutil.which("pixi") or "pixi"
@@ -225,10 +226,12 @@ def build_launch_spec(
     if canonical_target:
         env_prefix += f"CANONICAL_TARGET={shlex.quote(str(canonical_target))} "
 
+    resolve_dir = pixi_resolve_dir or paths.supervised_repo
     command = (
         f"{cleared_pixi_env} && "
+        f'eval "$(cd {shlex.quote(str(resolve_dir))} && '
+        f'{shlex.quote(resolved_pixi)} shell-hook -e dev)" && '
         f"cd {shlex.quote(str(paths.supervised_repo))} && "
-        f'eval "$({shlex.quote(resolved_pixi)} shell-hook -e dev)" && '
         f"{env_prefix}"
         f"{shlex.quote(str(resolved_claude))} "
         f"-p {shlex.quote(resolved_prompt)} "
