@@ -21,3 +21,7 @@ build/
 pixi.lock
 test-results.xml
 .env
+
+# Researcher variant configs (research results, not wiring)
+researcher_variants/variants/
+!researcher_variants/variants/EXAMPLE-variant.md
