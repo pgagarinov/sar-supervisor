@@ -102,23 +102,34 @@ class _MergeTestBase(unittest.TestCase):
         # Supervised repo (researcher) with .env pointing to target
         self.supervised_repo = self.tmpdir / "sar-research-loop"
         _init_repo(self.supervised_repo)
-        env_content = f"TARGET_PATH={self.canonical_target}\n"
+        env_content = f"SAR_TARGET_PATH={self.canonical_target}\n"
         (self.supervised_repo / ".env").write_text(env_content)
 
-        # Supervisor workspace
+        # Supervisor workspace + project dirs
         self.workspace = self.tmpdir / "sar-supervisor"
         self.workspace.mkdir(parents=True, exist_ok=True)
-        self.state_dir = self.workspace / ".supervisor"
+        self.clone_dir = self.tmpdir / "clones"
+        self.clone_dir.mkdir(parents=True, exist_ok=True)
+        self.state_dir = self.tmpdir / "state"
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.snapshots_dir = self.state_dir / "snapshots"
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create target clone simulating a researcher variant's work
-        self.target_clone = Path(f"{self.canonical_target}--{self.variant_id}")
-        if self.target_clone.exists():
-            shutil.rmtree(self.target_clone)
+        # Create project target clone (what _resolve_target_repo would create)
+        self.project_target = self.clone_dir / self.canonical_target.name
         subprocess.run(
-            ["git", "clone", "--local", str(self.canonical_target), str(self.target_clone)],
+            ["git", "clone", "--local", str(self.canonical_target), str(self.project_target)],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "remote", "remove", "origin"],
+            cwd=self.project_target, check=False, capture_output=True,
+        )
+
+        # Create variant target clone (sibling of project target in clone_dir)
+        self.target_clone = self.clone_dir / f"{self.canonical_target.name}--{self.variant_id}"
+        subprocess.run(
+            ["git", "clone", "--local", str(self.project_target), str(self.target_clone)],
             check=True, capture_output=True,
         )
         subprocess.run(
@@ -134,14 +145,6 @@ class _MergeTestBase(unittest.TestCase):
         self.paths = self._make_paths()
 
     def tearDown(self) -> None:
-        # Clean up clones and backups
-        for suffix in (
-            f"--{self.variant_id}",
-            ".pre-merge-backup",
-        ):
-            p = Path(f"{self.canonical_target}{suffix}")
-            if p.exists():
-                shutil.rmtree(p)
         self._tmpdir.cleanup()
 
     def _make_paths(self) -> RepoPaths:
@@ -168,8 +171,8 @@ class _MergeTestBase(unittest.TestCase):
             config_dirs=(Path("~/.claude").expanduser(),),
             config={},
             project_id=f"test-{self.__class__.__name__.lower()}",
-            project_dir=self.tmpdir / "project",
-            clone_dir=self.tmpdir / "clones",
+            project_dir=self.tmpdir,
+            clone_dir=self.clone_dir,
         )
 
 

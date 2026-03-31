@@ -47,6 +47,7 @@ researcher-restore = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli re
 researcher-revert-safe = "PYTHONPATH=src python -m supervisor_harness.cli revert-safe"
 researcher-variant = { cmd = "PYTHONPATH=src python -m supervisor_harness.cli variant", depends-on = [] }
 status-tree = "PYTHONPATH=src python -m supervisor_harness.cli status-tree --json"
+promote = "PYTHONPATH=src python -m supervisor_harness.cli promote"
 # Self management: <action> pattern
 clean = "PYTHONPATH=src python -m supervisor_harness.cli clean --include-log"
 

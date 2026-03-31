@@ -477,17 +477,42 @@ def _symlink_pixi(source_repo: Path, clone_path: Path) -> None:
         clone_pixi.symlink_to(pixi_dir.resolve())
 
 
-def _resolve_target_repo(supervised_repo: Path) -> Path:
-    """Resolve the target repo absolute path from the researcher's .env."""
+def _read_canonical_target(supervised_repo: Path) -> Path:
+    """Read the canonical target path from the researcher's .env (SAR_TARGET_PATH)."""
     env_path = supervised_repo / ".env"
     target_rel = "../sar-rag-target"
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if line.startswith("TARGET_PATH="):
+            if line.startswith("SAR_TARGET_PATH="):
                 target_rel = line.split("=", 1)[1].strip()
                 break
     return (supervised_repo / target_rel).resolve()
+
+
+def _resolve_target_repo(supervised_repo: Path, clone_dir: Path) -> Path:
+    """Resolve the project's target clone, creating it from canonical on first access.
+
+    The canonical target is NEVER modified — it's read-only seed material.
+    Returns the project-scoped clone path.
+    """
+    canonical = _read_canonical_target(supervised_repo)
+    project_target = clone_dir / canonical.name
+    if project_target.exists():
+        return project_target
+
+    # First access — clone from canonical, remove origin to protect it
+    clone_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "clone", "--local", str(canonical), str(project_target)],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "remote", "remove", "origin"],
+        cwd=project_target, check=False, capture_output=True,
+    )
+    _symlink_pixi(canonical, project_target)
+    return project_target
 
 
 def _create_variant_clone(
@@ -592,7 +617,7 @@ def start_researcher_variant(
     researcher_clone = _create_variant_clone(paths.supervised_repo, variant_id, clone_base=paths.clone_dir)
 
     # Create isolated target clone (in project's clone dir)
-    target_repo = _resolve_target_repo(paths.supervised_repo)
+    target_repo = _resolve_target_repo(paths.supervised_repo, paths.clone_dir)
     target_clone = _create_target_clone(target_repo, variant_id, clone_base=paths.clone_dir)
 
     # If a variant SKILL.md was provided, apply it to the clone
@@ -680,7 +705,7 @@ def park_researcher_variant(
     # Stop the process
     stop_researcher_variant(paths, variant_id)
 
-    target_repo = _resolve_target_repo(paths.supervised_repo)
+    target_repo = _resolve_target_repo(paths.supervised_repo, paths.clone_dir)
     target_clone = paths.clone_dir / f"{target_repo.name}--{variant_id}"
 
     # Auto-commit any uncommitted target changes
@@ -762,7 +787,7 @@ def park_researcher_variant(
 def discard_researcher_variant(paths: RepoPaths, variant_id: str) -> None:
     """Stop and destroy everything for a researcher variant."""
     stop_researcher_variant(paths, variant_id)
-    target_repo = _resolve_target_repo(paths.supervised_repo)
+    target_repo = _resolve_target_repo(paths.supervised_repo, paths.clone_dir)
     _remove_variant_clones(paths.supervised_repo, target_repo, variant_id, clone_base=paths.clone_dir)
     # Remove parked state if any
     parked_path = paths.state_dir / f"parked-{variant_id}.json"
@@ -818,7 +843,7 @@ def merge_winner_takes_all(
     """
     from harness_core.git_utils import git_fetch, git_head as _git_head
 
-    target_repo = _resolve_target_repo(paths.supervised_repo)
+    target_repo = _resolve_target_repo(paths.supervised_repo, paths.clone_dir)
     target_clone = Path(f"{target_repo}--{variant_id}")
 
     if not target_clone.exists():
@@ -874,7 +899,7 @@ def merge_cherry_pick(
         git_log_range as _log_range,
     )
 
-    target_repo = _resolve_target_repo(paths.supervised_repo)
+    target_repo = _resolve_target_repo(paths.supervised_repo, paths.clone_dir)
 
     with _MergeLock(paths.state_dir):
         # Backup canonical state
@@ -947,7 +972,7 @@ def merge_branch_and_continue(
     """
     from harness_core.git_utils import git_command as _git_cmd, git_head as _git_head
 
-    target_repo = _resolve_target_repo(paths.supervised_repo)
+    target_repo = _resolve_target_repo(paths.supervised_repo, paths.clone_dir)
     target_clone = Path(f"{target_repo}--{variant_id}")
 
     if not target_clone.exists():
@@ -1017,7 +1042,7 @@ def rollback_merge(paths: RepoPaths) -> dict[str, Any]:
     import shutil as _shutil
     from harness_core.git_utils import git_command as _git_cmd
 
-    target_repo = _resolve_target_repo(paths.supervised_repo)
+    target_repo = _resolve_target_repo(paths.supervised_repo, paths.clone_dir)
 
     # Check for code-state backup (WTA / cherry-pick)
     backup_dir = paths.snapshots_dir / "pre-merge-backup"

@@ -102,7 +102,7 @@ class _VariantTestBase(unittest.TestCase):
         (self.target / ".pixi" / "marker").write_text("pixi-env")
 
         # Point supervised .env at target
-        (self.supervised / ".env").write_text(f"TARGET_PATH={self.target}\n")
+        (self.supervised / ".env").write_text(f"SAR_TARGET_PATH={self.target}\n")
 
         # Workspace (supervisor)
         self.workspace = self.tmpdir / "sar-supervisor"

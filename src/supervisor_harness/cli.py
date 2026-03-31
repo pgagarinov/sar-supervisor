@@ -433,6 +433,36 @@ def _cmd_status_tree(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_promote(args: argparse.Namespace) -> int:
+    """Promote project's target clone state to the canonical target."""
+    from harness_core.git_utils import git_fetch, git_reset_hard, git_command, git_head
+    from supervisor_harness.supervisor import _read_canonical_target
+
+    paths = _paths_from_args(args)
+    canonical = _read_canonical_target(paths.supervised_repo)
+    project_target = paths.clone_dir / canonical.name
+
+    if not project_target.exists():
+        print("error: no project target clone to promote", file=sys.stderr)
+        return 1
+
+    project_head = git_head(project_target)
+    canonical_head = git_head(canonical)
+
+    if project_head == canonical_head:
+        print("nothing to promote (already in sync)")
+        return 0
+
+    git_fetch(canonical, project_target, "main")
+    git_reset_hard(canonical, "FETCH_HEAD")
+    git_command(canonical, "tag", "-f", "baseline", "HEAD")
+
+    print(f"promoted: {canonical_head[:7]} → {project_head[:7]}")
+    print(f"  project: {project_target}")
+    print(f"  canonical: {canonical}")
+    return 0
+
+
 def _cmd_restore(args: argparse.Namespace) -> int:
     paths = _paths_from_args(args)
     try:
@@ -872,6 +902,9 @@ def build_parser() -> argparse.ArgumentParser:
     status_tree_parser = subparsers.add_parser("status-tree", parents=[common])
     status_tree_parser.add_argument("--json", action="store_true")
     status_tree_parser.set_defaults(func=_cmd_status_tree)
+
+    promote_parser = subparsers.add_parser("promote", parents=[common])
+    promote_parser.set_defaults(func=_cmd_promote)
 
     restore_parser = subparsers.add_parser("restore", parents=[common])
     restore_parser.add_argument("identifier", help="Snapshot ID prefix, full path, or 'best'")

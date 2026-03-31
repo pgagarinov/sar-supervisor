@@ -16,6 +16,7 @@ import os
 import subprocess
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import pytest
@@ -59,10 +60,20 @@ if not _CLAUDE_CONFIG_DIRS:
         "Set it in .env or export it."
     )
 
+import shutil
+from uuid import uuid4
+
 _THIS_DIR = Path(__file__).parent
 _SUPERVISOR_ROOT = _THIS_DIR.parent
 _RESEARCH_LOOP = _SUPERVISOR_ROOT.parent / "sar-research-loop"
 _RAG_TARGET = _SUPERVISOR_ROOT.parent / "sar-rag-target"
+
+
+def _project_dir() -> Path:
+    """Return the current project directory from env vars."""
+    root = Path(os.environ.get("SAR_PROJECTS_ROOT", "/tmp/sar-projects"))
+    pid = os.environ.get("SAR_PROJECT_ID", "default")
+    return root / pid
 
 
 def _pixi_run(repo: Path, *args: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
@@ -87,7 +98,8 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _wait_for_iterations(variant_id: str, min_iters: int = 1, timeout: int = 1200) -> bool:
-    results_path = Path(f"/tmp/sar-research-loop--{variant_id}/results.tsv")
+    clone_dir = _project_dir() / "clones"
+    results_path = clone_dir / f"sar-research-loop--{variant_id}" / "results.tsv"
     deadline = time.time() + timeout
     while time.time() < deadline:
         if results_path.exists():
@@ -104,9 +116,39 @@ def _cleanup_variant(vid: str) -> None:
 
 
 def _state_file(vid: str) -> dict:
-    for f in (_SUPERVISOR_ROOT / ".supervisor").glob(f"*--{vid}-state.json"):
+    state_dir = _project_dir() / "state"
+    for f in state_dir.glob(f"*--{vid}-state.json"):
         return json.loads(f.read_text())
     return {}
+
+
+class _E2EProjectBase(unittest.TestCase):
+    """Base class that provides project-based isolation for E2E tests.
+
+    Each test class gets a unique SAR_PROJECT_ID. All state (PIDs, clones,
+    logs, reports) is scoped to that project. tearDownClass deletes the
+    entire project directory.
+    """
+
+    _project_id: str = ""
+    _project_path: Path = Path()
+    _env_patcher: object = None
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._project_id = f"e2e-{cls.__name__.lower()}-{uuid4().hex[:8]}"
+        projects_root = os.environ.get("SAR_PROJECTS_ROOT", "/tmp/sar-projects")
+        cls._project_path = Path(projects_root) / cls._project_id
+        cls._env_patcher = unittest.mock.patch.dict(
+            "os.environ", {"SAR_PROJECT_ID": cls._project_id},
+        )
+        cls._env_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._env_patcher.stop()
+        if cls._project_path.exists():
+            shutil.rmtree(cls._project_path, ignore_errors=True)
 
 
 # =============================================================================
@@ -114,7 +156,7 @@ def _state_file(vid: str) -> dict:
 # =============================================================================
 
 
-class TestCloneIsolationE2E(unittest.TestCase):
+class TestCloneIsolationE2E(_E2EProjectBase):
 
     def setUp(self):
         self.vid = "e2e-clone"
@@ -151,7 +193,7 @@ class TestCloneIsolationE2E(unittest.TestCase):
         self.assertFalse(target_clone.exists())
 
 
-class TestCloneFromCanonicalE2E(unittest.TestCase):
+class TestCloneFromCanonicalE2E(_E2EProjectBase):
 
     def test_05_clone_independence(self):
         """#5: Two clones from same canonical have independent git history."""
@@ -174,7 +216,7 @@ class TestCloneFromCanonicalE2E(unittest.TestCase):
             _cleanup_variant(vid_b)
 
 
-class TestConcurrentClonesSafetyE2E(unittest.TestCase):
+class TestConcurrentClonesSafetyE2E(_E2EProjectBase):
 
     def test_03_two_clones_commit_independently(self):
         """#3: Two researcher variants can both commit without conflict."""
@@ -198,7 +240,7 @@ class TestConcurrentClonesSafetyE2E(unittest.TestCase):
 # =============================================================================
 
 
-class TestProfileRotationE2E(unittest.TestCase):
+class TestProfileRotationE2E(_E2EProjectBase):
 
     def test_10_researcher_uses_profile_i_plus_1(self):
         """#10: Researcher's config_dir differs from supervisor's."""
@@ -282,7 +324,7 @@ class TestProfileRotationE2E(unittest.TestCase):
 # =============================================================================
 
 
-class TestVariantLifecycleE2E(unittest.TestCase):
+class TestVariantLifecycleE2E(_E2EProjectBase):
 
     def test_16_start_creates_both_clones(self):
         """#16: Start creates researcher clone AND target clone."""
@@ -425,7 +467,7 @@ class TestVariantLifecycleE2E(unittest.TestCase):
 # =============================================================================
 
 
-class TestMergeWTAE2E(unittest.TestCase):
+class TestMergeWTAE2E(_E2EProjectBase):
     """Winner Takes All merge with real researcher variant."""
 
     def test_25_canonical_head_changes(self):
@@ -476,7 +518,7 @@ class TestMergeWTAE2E(unittest.TestCase):
             _cleanup_variant(vid)
 
 
-class TestMergeCherryPickE2E(unittest.TestCase):
+class TestMergeCherryPickE2E(_E2EProjectBase):
     """Cherry-pick merge with real researcher variants."""
 
     def test_28_cherry_pick_from_variant(self):
@@ -513,7 +555,7 @@ class TestMergeCherryPickE2E(unittest.TestCase):
             _cleanup_variant(vid)
 
 
-class TestMergeBranchAndContinueE2E(unittest.TestCase):
+class TestMergeBranchAndContinueE2E(_E2EProjectBase):
     """Branch-and-continue merge with real researcher variant."""
 
     def test_31_clone_becomes_canonical(self):
@@ -571,7 +613,7 @@ class TestMergeBranchAndContinueE2E(unittest.TestCase):
 # =============================================================================
 
 
-class TestRollbackE2E(unittest.TestCase):
+class TestRollbackE2E(_E2EProjectBase):
 
     def test_34_rollback_after_wta(self):
         """#34: Rollback after WTA restores original HEAD."""
@@ -633,7 +675,7 @@ class TestRollbackE2E(unittest.TestCase):
 # =============================================================================
 
 
-class TestMergeLockE2E(unittest.TestCase):
+class TestMergeLockE2E(_E2EProjectBase):
 
     def test_39_lock_released_after_merge(self):
         """#39: After successful merge, merge.lock does not exist."""
@@ -656,7 +698,7 @@ class TestMergeLockE2E(unittest.TestCase):
 # =============================================================================
 
 
-class TestMonitorOutputE2E(unittest.TestCase):
+class TestMonitorOutputE2E(_E2EProjectBase):
 
     def test_45_loop_once_shows_metrics(self):
         """#45: researcher-loop-once output contains profile and metric values."""
@@ -715,7 +757,7 @@ class TestMonitorOutputE2E(unittest.TestCase):
 # =============================================================================
 
 
-class TestEdgeCasesE2E(unittest.TestCase):
+class TestEdgeCasesE2E(_E2EProjectBase):
 
     def test_49_park_already_stopped(self):
         """#49: Park a variant whose process already died."""

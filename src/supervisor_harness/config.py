@@ -236,13 +236,13 @@ def build_launch_spec(
         env_prefix += "ENABLE_LSP_TOOL=1 "
     env_prefix += f"CLAUDE_CONFIG_DIR={shlex.quote(str(resolved_config_dir))} "
     env_prefix += f"CLAUDE_CONFIG_DIRS={shlex.quote(config_dirs_str)} "
-    env_prefix += f"TARGET_CLAUDE_CONFIG_DIR={shlex.quote(str(target_config_dir))} "
+    env_prefix += f"SAR_TARGET_CLAUDE_CONFIG_DIR={shlex.quote(str(target_config_dir))} "
     if variant_id:
-        env_prefix += f"RV_ID={shlex.quote(variant_id)} "
+        env_prefix += f"SAR_RV_ID={shlex.quote(variant_id)} "
     if target_repo:
-        env_prefix += f"TARGET_REPO={shlex.quote(str(target_repo))} "
+        env_prefix += f"SAR_TARGET_REPO={shlex.quote(str(target_repo))} "
     if canonical_target:
-        env_prefix += f"CANONICAL_TARGET={shlex.quote(str(canonical_target))} "
+        env_prefix += f"SAR_CANONICAL_TARGET={shlex.quote(str(canonical_target))} "
     # Pass project isolation env vars to child
     env_prefix += f"SAR_PROJECT_ID={shlex.quote(paths.project_id)} "
     env_prefix += f"SAR_PROJECTS_ROOT={shlex.quote(str(paths.project_dir.parent))} "

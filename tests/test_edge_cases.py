@@ -19,6 +19,7 @@ from supervisor_harness.supervisor import (
     _create_target_clone,
     _create_variant_clone,
     _remove_variant_clones,
+    _resolve_target_repo,
     discard_researcher_variant,
     merge_branch_and_continue,
     merge_cherry_pick,
@@ -96,7 +97,7 @@ class _EdgeCaseTestBase(unittest.TestCase):
         (self.target / ".pixi" / "marker").write_text("pixi-env")
 
         # Point supervised .env at target
-        (self.supervised / ".env").write_text(f"TARGET_PATH={self.target}\n")
+        (self.supervised / ".env").write_text(f"SAR_TARGET_PATH={self.target}\n")
 
         # Workspace (supervisor)
         self.workspace = self.tmpdir / "sar-supervisor"
@@ -163,7 +164,7 @@ class TestParkAlreadyStopped(_EdgeCaseTestBase):
     def test_park_already_stopped_variant(self) -> None:
         """Parking a variant with a non-existent PID still works."""
         # Create target clone with a commit
-        target_clone = _create_target_clone(self.target, self.variant_id)
+        target_clone = _create_target_clone(_resolve_target_repo(self.supervised, self.paths.clone_dir), self.variant_id, clone_base=self.paths.clone_dir)
         subprocess.run(
             ["git", "config", "user.email", "t@t"],
             cwd=target_clone, check=True, capture_output=True,
@@ -194,7 +195,7 @@ class TestParkDirtyTarget(_EdgeCaseTestBase):
 
     def test_park_with_dirty_target(self) -> None:
         """Parking auto-commits uncommitted files in target clone."""
-        target_clone = _create_target_clone(self.target, self.variant_id, clone_base=self.paths.clone_dir)
+        target_clone = _create_target_clone(_resolve_target_repo(self.supervised, self.paths.clone_dir), self.variant_id, clone_base=self.paths.clone_dir)
         subprocess.run(
             ["git", "config", "user.email", "t@t"],
             cwd=target_clone, check=True, capture_output=True,
@@ -263,7 +264,7 @@ class TestMergeAfterCanonicalDiverged(_EdgeCaseTestBase):
         )
 
         # Create target clone from canonical (includes diverged commit)
-        target_clone = _create_target_clone(self.target, self.variant_id)
+        target_clone = _create_target_clone(_resolve_target_repo(self.supervised, self.paths.clone_dir), self.variant_id, clone_base=self.paths.clone_dir)
         subprocess.run(
             ["git", "config", "user.email", "t@t"],
             cwd=target_clone, check=True, capture_output=True,
@@ -298,7 +299,7 @@ class TestRollbackAfterDivergedCanonical(_EdgeCaseTestBase):
         )
 
         # Create target clone and make a variant commit
-        target_clone = _create_target_clone(self.target, self.variant_id)
+        target_clone = _create_target_clone(_resolve_target_repo(self.supervised, self.paths.clone_dir), self.variant_id, clone_base=self.paths.clone_dir)
         subprocess.run(
             ["git", "config", "user.email", "t@t"],
             cwd=target_clone, check=True, capture_output=True,
@@ -326,7 +327,7 @@ class TestCherryPickEmptyRange(_EdgeCaseTestBase):
     def test_empty_commit_range(self) -> None:
         """Cherry-pick with no new commits returns empty applied list."""
         # Create a target clone with no new commits beyond baseline
-        target_clone = _create_target_clone(self.target, self.variant_id)
+        target_clone = _create_target_clone(_resolve_target_repo(self.supervised, self.paths.clone_dir), self.variant_id, clone_base=self.paths.clone_dir)
 
         # Fetch clone into canonical so cherry-pick can work
         subprocess.run(
@@ -345,7 +346,7 @@ class TestBranchAndContinueMissingPixi(_EdgeCaseTestBase):
     def test_still_works_without_pixi(self) -> None:
         """merge_branch_and_continue succeeds even if clone has no .pixi."""
         # Create target clone
-        target_clone = _create_target_clone(self.target, self.variant_id)
+        target_clone = _create_target_clone(_resolve_target_repo(self.supervised, self.paths.clone_dir), self.variant_id, clone_base=self.paths.clone_dir)
         subprocess.run(
             ["git", "config", "user.email", "t@t"],
             cwd=target_clone, check=True, capture_output=True,
