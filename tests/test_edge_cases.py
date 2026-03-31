@@ -367,10 +367,11 @@ class TestBranchAndContinueMissingPixi(_EdgeCaseTestBase):
 
         result = merge_branch_and_continue(self.paths, self.variant_id)
         self.assertEqual(result["strategy"], "branch_and_continue")
-        # The merged canonical should have the work file
+        # The merged project target should have the work file
+        project_target = self.paths.clone_dir / self.target.name
         self.assertTrue(
-            (self.target / "work.txt").exists(),
-            "Canonical should contain clone's work.txt after merge",
+            (project_target / "work.txt").exists(),
+            "Project target should contain clone's work.txt after merge",
         )
 
 

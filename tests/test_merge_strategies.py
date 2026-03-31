@@ -189,7 +189,7 @@ class TestMergeWinnerTakesAll(_MergeTestBase):
     def test_canonical_head_matches_clone(self) -> None:
         """After WTA merge, canonical HEAD matches the clone's HEAD."""
         merge_winner_takes_all(self.paths, self.variant_id)
-        self.assertEqual(git_head(self.canonical_target), self.clone_head)
+        self.assertEqual(git_head(self.project_target), self.clone_head)
 
     def test_backup_created(self) -> None:
         """WTA merge creates a backup snapshot in pre-merge-backup."""
@@ -205,8 +205,8 @@ class TestMergeWinnerTakesAll(_MergeTestBase):
     def test_baseline_tag_updated(self) -> None:
         """WTA merge updates the baseline tag to new HEAD."""
         merge_winner_takes_all(self.paths, self.variant_id)
-        baseline_sha = _resolve_tag(self.canonical_target, "baseline")
-        head_sha = git_head(self.canonical_target)
+        baseline_sha = _resolve_tag(self.project_target, "baseline")
+        head_sha = git_head(self.project_target)
         self.assertEqual(baseline_sha, head_sha,
                          "baseline tag should point to new HEAD after merge")
 
@@ -228,7 +228,7 @@ class TestMergeCherryPick(_MergeTestBase):
         # then cherry-picks them into canonical — canonical must have the objects.
         subprocess.run(
             ["git", "fetch", str(self.target_clone), "main"],
-            cwd=self.canonical_target, check=True, capture_output=True,
+            cwd=self.project_target, check=True, capture_output=True,
         )
 
     def test_individual_commits_applied(self) -> None:
@@ -237,11 +237,11 @@ class TestMergeCherryPick(_MergeTestBase):
         self.assertGreater(len(result["applied"]), 0, "Should have applied commits")
         # Both feature files should exist in canonical
         self.assertTrue(
-            (self.canonical_target / "feat1.txt").exists(),
+            (self.project_target / "feat1.txt").exists(),
             "feat1.txt should be in canonical after cherry-pick",
         )
         self.assertTrue(
-            (self.canonical_target / "feat2.txt").exists(),
+            (self.project_target / "feat2.txt").exists(),
             "feat2.txt should be in canonical after cherry-pick",
         )
 
@@ -249,10 +249,10 @@ class TestMergeCherryPick(_MergeTestBase):
         """Cherry-pick skips conflicting commits and reports them."""
         # Create a conflicting change in canonical on the same file
         _commit_file(
-            self.canonical_target, "feat1.txt", "different-content", "conflict setup",
+            self.project_target, "feat1.txt", "different-content", "conflict setup",
         )
         # Re-tag baseline so cherry-pick finds the clone commits
-        git_command(self.canonical_target, "tag", "-f", "baseline", self.original_head)
+        git_command(self.project_target, "tag", "-f", "baseline", self.original_head)
 
         result = merge_cherry_pick(self.paths, [self.variant_id])
         # The first commit (feat1.txt) should conflict, second should apply
@@ -268,8 +268,8 @@ class TestMergeCherryPick(_MergeTestBase):
         """Cherry-pick updates the baseline tag after applying commits."""
         result = merge_cherry_pick(self.paths, [self.variant_id])
         if result["applied"]:
-            baseline_sha = _resolve_tag(self.canonical_target, "baseline")
-            head_sha = git_head(self.canonical_target)
+            baseline_sha = _resolve_tag(self.project_target, "baseline")
+            head_sha = git_head(self.project_target)
             self.assertEqual(baseline_sha, head_sha,
                              "baseline should point to HEAD after cherry-pick")
 
@@ -288,25 +288,25 @@ class TestMergeBranchAndContinue(_MergeTestBase):
         """After B&C, the canonical location contains the clone's content."""
         merge_branch_and_continue(self.paths, self.variant_id)
         self.assertTrue(
-            (self.canonical_target / "promoted.txt").exists(),
+            (self.project_target / "promoted.txt").exists(),
             "Canonical should now have the clone's promoted.txt",
         )
-        self.assertEqual(git_head(self.canonical_target), self.clone_head)
+        self.assertEqual(git_head(self.project_target), self.clone_head)
 
     def test_pixi_re_symlinked(self) -> None:
         """After B&C, .pixi is re-symlinked if source had a real .pixi directory."""
         # Create a real .pixi in the backup location (canonical before move)
-        pixi_dir = self.canonical_target / ".pixi"
+        pixi_dir = self.project_target / ".pixi"
         pixi_dir.mkdir(exist_ok=True)
         (pixi_dir / "marker").write_text("env-data")
 
         merge_branch_and_continue(self.paths, self.variant_id)
 
-        pixi_link = self.canonical_target / ".pixi"
+        pixi_link = self.project_target / ".pixi"
         # After merge, .pixi should be a symlink pointing to backup's .pixi
         if pixi_link.exists() or pixi_link.is_symlink():
             # The symlink target should resolve to the backup's .pixi
-            backup_path = Path(f"{self.canonical_target}.pre-merge-backup")
+            backup_path = Path(f"{self.project_target}.pre-merge-backup")
             self.assertTrue(
                 pixi_link.is_symlink(),
                 ".pixi should be a symlink after B&C merge",
@@ -334,7 +334,7 @@ class TestRollbackMerge(_MergeTestBase):
         )
         merge_winner_takes_all(self.paths, self.variant_id)
         # HEAD should have changed
-        self.assertNotEqual(git_head(self.canonical_target), self.original_head)
+        self.assertNotEqual(git_head(self.project_target), self.original_head)
 
         result = rollback_merge(self.paths)
         # restore_code_state was used (code-state backup exists)
@@ -348,7 +348,7 @@ class TestRollbackMerge(_MergeTestBase):
         # Fetch clone objects into canonical so cherry-pick can resolve commits
         subprocess.run(
             ["git", "fetch", str(self.target_clone), "main"],
-            cwd=self.canonical_target, check=True, capture_output=True,
+            cwd=self.project_target, check=True, capture_output=True,
         )
         merge_cherry_pick(self.paths, [self.variant_id])
 
@@ -363,18 +363,18 @@ class TestRollbackMerge(_MergeTestBase):
         merge_branch_and_continue(self.paths, self.variant_id)
         # Original file should still exist (clone was cloned from canonical)
         # but the new file from the clone should also be there
-        self.assertTrue((self.canonical_target / "bc.txt").exists())
+        self.assertTrue((self.project_target / "bc.txt").exists())
 
         # Now rollback — the code-state backup won't exist for B&C,
         # but the .pre-merge-backup directory will
         rollback_merge(self.paths)
         # After rollback, the original canonical should be restored
         self.assertTrue(
-            (self.canonical_target / "file.txt").exists(),
+            (self.project_target / "file.txt").exists(),
             "Original file.txt should be restored",
         )
         self.assertFalse(
-            (self.canonical_target / "bc.txt").exists(),
+            (self.project_target / "bc.txt").exists(),
             "Clone's bc.txt should not be in restored canonical",
         )
 
@@ -402,7 +402,7 @@ class TestCherryPickAutoFetch(_MergeTestBase):
         self.assertGreater(len(result["applied"]), 0,
                            "Cherry-pick should apply commits even without prior fetch")
         self.assertTrue(
-            (self.canonical_target / "auto-fetched.txt").exists(),
+            (self.project_target / "auto-fetched.txt").exists(),
             "auto-fetched.txt should exist in canonical after cherry-pick",
         )
 
@@ -414,9 +414,9 @@ class TestRollbackRestoresHead(_MergeTestBase):
         """After WTA merge + rollback, HEAD matches the original pre-merge HEAD."""
         _commit_file(self.target_clone, "wta.txt", "v", "wta commit")
         merge_winner_takes_all(self.paths, self.variant_id)
-        self.assertNotEqual(git_head(self.canonical_target), self.original_head)
+        self.assertNotEqual(git_head(self.project_target), self.original_head)
         rollback_merge(self.paths)
-        self.assertEqual(git_head(self.canonical_target), self.original_head,
+        self.assertEqual(git_head(self.project_target), self.original_head,
                          "HEAD should be restored to pre-merge state after rollback")
 
     def test_rollback_after_cherry_pick_restores_head(self) -> None:
@@ -424,11 +424,11 @@ class TestRollbackRestoresHead(_MergeTestBase):
         _commit_file(self.target_clone, "cp.txt", "v", "cp commit")
         subprocess.run(
             ["git", "fetch", str(self.target_clone), "main"],
-            cwd=self.canonical_target, check=True, capture_output=True,
+            cwd=self.project_target, check=True, capture_output=True,
         )
         merge_cherry_pick(self.paths, [self.variant_id])
         rollback_merge(self.paths)
-        self.assertEqual(git_head(self.canonical_target), self.original_head,
+        self.assertEqual(git_head(self.project_target), self.original_head,
                          "HEAD should be restored after cherry-pick rollback")
 
     def test_rollback_after_bac_restores_head(self) -> None:
@@ -436,7 +436,7 @@ class TestRollbackRestoresHead(_MergeTestBase):
         _commit_file(self.target_clone, "bc.txt", "v", "bc commit")
         merge_branch_and_continue(self.paths, self.variant_id)
         rollback_merge(self.paths)
-        self.assertEqual(git_head(self.canonical_target), self.original_head,
+        self.assertEqual(git_head(self.project_target), self.original_head,
                          "HEAD should be restored after B&C rollback")
 
 
@@ -457,7 +457,7 @@ class TestRollbackCleansUpBackup(_MergeTestBase):
         _commit_file(self.target_clone, "clean.txt", "v", "commit")
         merge_branch_and_continue(self.paths, self.variant_id)
         rollback_merge(self.paths)
-        backup_path = Path(f"{self.canonical_target}.pre-merge-backup")
+        backup_path = Path(f"{self.project_target}.pre-merge-backup")
         self.assertFalse(backup_path.exists(),
                          "Backup should be removed after successful rollback")
 
@@ -483,13 +483,13 @@ class TestBranchAndContinuePixiSymlink(_MergeTestBase):
         real_pixi = self.tmpdir / "real-pixi-env"
         real_pixi.mkdir()
         (real_pixi / "marker").write_text("pixi-data")
-        pixi_link = self.canonical_target / ".pixi"
+        pixi_link = self.project_target / ".pixi"
         if pixi_link.exists() or pixi_link.is_symlink():
             pixi_link.unlink()
         pixi_link.symlink_to(real_pixi)
 
         merge_branch_and_continue(self.paths, self.variant_id)
-        new_pixi = self.canonical_target / ".pixi"
+        new_pixi = self.project_target / ".pixi"
         self.assertTrue(new_pixi.exists() or new_pixi.is_symlink(),
                         ".pixi should exist after B&C even when source was a symlink")
 
@@ -503,7 +503,7 @@ class TestBranchAndContinuePreservesRemoteUrl(_MergeTestBase):
         # Add a fake GitHub remote URL on the canonical target
         subprocess.run(
             ["git", "remote", "add", "origin", "git@github.com:user/repo.git"],
-            cwd=self.canonical_target, check=True, capture_output=True,
+            cwd=self.project_target, check=True, capture_output=True,
         )
 
     def test_remote_url_preserved_after_bac(self) -> None:
@@ -511,7 +511,7 @@ class TestBranchAndContinuePreservesRemoteUrl(_MergeTestBase):
         merge_branch_and_continue(self.paths, self.variant_id)
         result = subprocess.run(
             ["git", "remote", "get-url", "origin"],
-            cwd=self.canonical_target, check=True, capture_output=True, text=True,
+            cwd=self.project_target, check=True, capture_output=True, text=True,
         )
         actual_url = result.stdout.strip()
         self.assertEqual(
@@ -531,7 +531,7 @@ class TestBranchAndContinuePixiDirInClone(_MergeTestBase):
         """After B&C with no .pixi in canonical or clone, pixi install is called as fallback."""
         import shutil as _shutil
         # Remove .pixi from both canonical and clone
-        for path in [self.canonical_target / ".pixi", self.target_clone / ".pixi"]:
+        for path in [self.project_target / ".pixi", self.target_clone / ".pixi"]:
             if path.is_dir() and not path.is_symlink():
                 _shutil.rmtree(path)
             elif path.is_symlink() or path.exists():
@@ -567,7 +567,7 @@ class TestBranchAndContinuePixiDirInClone(_MergeTestBase):
         real_pixi = self.tmpdir / "real-pixi-env"
         real_pixi.mkdir()
         (real_pixi / "marker").write_text("canonical-pixi")
-        canonical_pixi = self.canonical_target / ".pixi"
+        canonical_pixi = self.project_target / ".pixi"
         if canonical_pixi.exists() or canonical_pixi.is_symlink():
             if canonical_pixi.is_dir() and not canonical_pixi.is_symlink():
                 import shutil
@@ -585,7 +585,7 @@ class TestBranchAndContinuePixiDirInClone(_MergeTestBase):
         # canonical/.pixi is now the clone's real dir (not a symlink).
         # The code must remove this real dir before creating the symlink.
         merge_branch_and_continue(self.paths, self.variant_id)
-        new_pixi = self.canonical_target / ".pixi"
+        new_pixi = self.project_target / ".pixi"
         self.assertTrue(new_pixi.exists() or new_pixi.is_symlink(),
                         ".pixi should exist after B&C when clone had real .pixi dir")
 

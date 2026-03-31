@@ -524,9 +524,11 @@ class TestLaunchSpecIncludesTargetRepo(_VariantTestBase):
                 self.paths, self.variant_id, clean_first=False,
             )
 
-        self.assertIn("CANONICAL_TARGET=", launch_spec.command,
-                       "Launch command must set CANONICAL_TARGET env var")
-        self.assertIn(str(self.target), launch_spec.command,
+        self.assertIn("SAR_CANONICAL_TARGET=", launch_spec.command,
+                       "Launch command must set SAR_CANONICAL_TARGET env var")
+        # SAR_CANONICAL_TARGET points to the project's target clone, not the real canonical
+        project_target_path = str(self.clone_dir / self.target.name)
+        self.assertIn(project_target_path, launch_spec.command,
                        f"CANONICAL_TARGET must contain canonical path {self.target}")
 
 
