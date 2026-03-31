@@ -168,7 +168,7 @@ class TestCloneIsolationE2E(_E2EProjectBase):
 
     def test_01_researcher_clone_has_own_git(self):
         """#1: Researcher clone has its own .git directory."""
-        clone = Path(f"/tmp/sar-research-loop--{self.vid}")
+        clone = _project_dir() / "clones" / f"sar-research-loop--{self.vid}"
         self.assertTrue((clone / ".git").is_dir(), "Clone should have .git dir")
         self.assertNotEqual(
             (clone / ".git").resolve(),
@@ -178,7 +178,7 @@ class TestCloneIsolationE2E(_E2EProjectBase):
 
     def test_02_target_clone_exists_with_pixi(self):
         """#2: Target clone exists with .pixi symlink."""
-        target_clone = _RAG_TARGET.parent / f"sar-rag-target--{self.vid}"
+        target_clone = _project_dir() / "clones" / f"sar-rag-target--{self.vid}"
         self.assertTrue(target_clone.exists(), f"Target clone should exist at {target_clone}")
         pixi = target_clone / ".pixi"
         self.assertTrue(pixi.is_symlink() or pixi.is_dir(), ".pixi should be symlinked or exist")
@@ -187,8 +187,8 @@ class TestCloneIsolationE2E(_E2EProjectBase):
         """#4: After discard, no clone or temp files remain."""
         _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "stop", "--id", self.vid)
         _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "discard", "--id", self.vid)
-        researcher_clone = Path(f"/tmp/sar-research-loop--{self.vid}")
-        target_clone = _RAG_TARGET.parent / f"sar-rag-target--{self.vid}"
+        researcher_clone = _project_dir() / "clones" / f"sar-research-loop--{self.vid}"
+        target_clone = _project_dir() / "clones" / f"sar-rag-target--{self.vid}"
         self.assertFalse(researcher_clone.exists())
         self.assertFalse(target_clone.exists())
 
@@ -202,8 +202,8 @@ class TestCloneFromCanonicalE2E(_E2EProjectBase):
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_a, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid_b, timeout=120)
             time.sleep(5)
-            target_a = _RAG_TARGET.parent / f"sar-rag-target--{vid_a}"
-            target_b = _RAG_TARGET.parent / f"sar-rag-target--{vid_b}"
+            target_a = _project_dir() / "clones" / f"sar-rag-target--{vid_a}"
+            target_b = _project_dir() / "clones" / f"sar-rag-target--{vid_b}"
             # Commit in A, verify B doesn't see it
             if target_a.exists():
                 (target_a / "test_a.txt").write_text("from A")
@@ -331,8 +331,8 @@ class TestVariantLifecycleE2E(_E2EProjectBase):
         vid = "e2e-life-16"
         try:
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
-            researcher_clone = Path(f"/tmp/sar-research-loop--{vid}")
-            target_clone = _RAG_TARGET.parent / f"sar-rag-target--{vid}"
+            researcher_clone = _project_dir() / "clones" / f"sar-research-loop--{vid}"
+            target_clone = _project_dir() / "clones" / f"sar-rag-target--{vid}"
             self.assertTrue(researcher_clone.exists())
             self.assertTrue(target_clone.exists())
         finally:
@@ -350,7 +350,7 @@ class TestVariantLifecycleE2E(_E2EProjectBase):
                 _SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid,
                 "--variant", str(variant_file), timeout=120,
             )
-            clone = Path(f"/tmp/sar-research-loop--{vid}")
+            clone = _project_dir() / "clones" / f"sar-research-loop--{vid}"
             skill_path = clone / ".claude" / "skills" / "start" / "SKILL.md"
             if skill_path.exists():
                 content = skill_path.read_text()
@@ -366,8 +366,8 @@ class TestVariantLifecycleE2E(_E2EProjectBase):
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
             time.sleep(3)
             _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "stop", "--id", vid)
-            researcher_clone = Path(f"/tmp/sar-research-loop--{vid}")
-            target_clone = _RAG_TARGET.parent / f"sar-rag-target--{vid}"
+            researcher_clone = _project_dir() / "clones" / f"sar-research-loop--{vid}"
+            target_clone = _project_dir() / "clones" / f"sar-rag-target--{vid}"
             self.assertTrue(researcher_clone.exists(), "Researcher clone should survive stop")
             self.assertTrue(target_clone.exists(), "Target clone should survive stop")
         finally:
@@ -394,7 +394,7 @@ class TestVariantLifecycleE2E(_E2EProjectBase):
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
             time.sleep(5)
             # Make target dirty
-            target_clone = _RAG_TARGET.parent / f"sar-rag-target--{vid}"
+            target_clone = _project_dir() / "clones" / f"sar-rag-target--{vid}"
             if target_clone.exists():
                 (target_clone / "dirty.txt").write_text("uncommitted")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
@@ -415,8 +415,8 @@ class TestVariantLifecycleE2E(_E2EProjectBase):
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
             time.sleep(5)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
-            researcher_clone = Path(f"/tmp/sar-research-loop--{vid}")
-            target_clone = _RAG_TARGET.parent / f"sar-rag-target--{vid}"
+            researcher_clone = _project_dir() / "clones" / f"sar-research-loop--{vid}"
+            target_clone = _project_dir() / "clones" / f"sar-rag-target--{vid}"
             self.assertFalse(researcher_clone.exists(), "Researcher clone should be removed")
             self.assertTrue(target_clone.exists(), "Target clone should be preserved")
         finally:
@@ -428,8 +428,8 @@ class TestVariantLifecycleE2E(_E2EProjectBase):
         _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
         time.sleep(3)
         _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "discard", "--id", vid, timeout=120)
-        self.assertFalse(Path(f"/tmp/sar-research-loop--{vid}").exists())
-        self.assertFalse((_RAG_TARGET.parent / f"sar-rag-target--{vid}").exists())
+        self.assertFalse((_project_dir() / "clones" / f"sar-research-loop--{vid}").exists())
+        self.assertFalse((_project_dir() / "clones" / f"sar-rag-target--{vid}").exists())
 
     def test_23_list_shows_running_variants(self):
         """#23: Variant list shows running variants with correct status."""
@@ -732,7 +732,7 @@ class TestMonitorOutputE2E(_E2EProjectBase):
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
             time.sleep(5)
             # The main target clone should exist
-            target_clone = _RAG_TARGET.parent / f"sar-rag-target--{vid}"
+            target_clone = _project_dir() / "clones" / f"sar-rag-target--{vid}"
             self.assertTrue(target_clone.exists(), "Target clone should be discoverable")
         finally:
             _cleanup_variant(vid)
