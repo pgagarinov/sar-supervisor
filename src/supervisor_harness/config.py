@@ -88,8 +88,8 @@ class RepoPaths:
     config_dirs: tuple[Path, ...]
     config: dict[str, Any]
     project_id: str = "default"
-    project_dir: Path = Path("/tmp/sar-projects/default")
-    clone_dir: Path = Path("/tmp/sar-projects/default/clones")
+    project_dir: Path = _project_dir()
+    clone_dir: Path = _project_dir() / "clones"
 
     @classmethod
     def discover(

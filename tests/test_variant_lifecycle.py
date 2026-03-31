@@ -273,8 +273,10 @@ class TestParkResearcherVariant(_VariantTestBase):
         # Make some commits
         _commit_file(target_clone, "improvement.py", "# better code", "improve target")
 
-        # Write a fake eval report
-        report_path = self.clone_dir / f"rag-eval-report--{self.variant_id}.json"
+        # Write a fake eval report (in project's reports dir, where park looks)
+        reports_dir = self.tmpdir / "projects" / self._project_id / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        report_path = reports_dir / f"rag-eval-report--{self.variant_id}.json"
         report_path.write_text(json.dumps({
             "total": 20, "passed": 18, "failed": 2,
         }))
