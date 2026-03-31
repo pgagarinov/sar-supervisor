@@ -350,12 +350,17 @@ def start_run(
     if haiku_offset.exists():
         haiku_offset.unlink()
 
+    # Resolve project target clone so the researcher uses it instead of canonical
+    project_target = _resolve_target_repo(paths.supervised_repo, paths.clone_dir)
+
     launch_spec = build_launch_spec(
         paths,
         prompt=prompt,
         claude_bin=claude_bin,
         pixi_bin=pixi_bin,
         config_dir=config_dir,
+        target_repo=project_target,
+        canonical_target=project_target,
     )
     paths.state_dir.mkdir(parents=True, exist_ok=True)
     launch_spec.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -619,6 +624,19 @@ def start_researcher_variant(
     # Create isolated target clone (in project's clone dir)
     target_repo = _resolve_target_repo(paths.supervised_repo, paths.clone_dir)
     target_clone = _create_target_clone(target_repo, variant_id, clone_base=paths.clone_dir)
+
+    # Update researcher clone's .env to point SAR_TARGET_PATH at the project target clone
+    # (the cloned .env points to the canonical — we need it to point to the project clone)
+    clone_env = researcher_clone / ".env"
+    if clone_env.exists():
+        env_text = clone_env.read_text(encoding="utf-8")
+        updated = []
+        for line in env_text.splitlines():
+            if line.strip().startswith("SAR_TARGET_PATH="):
+                updated.append(f"SAR_TARGET_PATH={target_repo}")
+            else:
+                updated.append(line)
+        clone_env.write_text("\n".join(updated) + "\n", encoding="utf-8")
 
     # If a variant SKILL.md was provided, apply it to the clone
     if variant_path and variant_path.exists():
