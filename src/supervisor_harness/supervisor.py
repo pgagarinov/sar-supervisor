@@ -490,15 +490,21 @@ def _symlink_pixi(source_repo: Path, clone_path: Path) -> None:
 
 
 def _read_canonical_target(supervised_repo: Path) -> Path:
-    """Read the canonical target path from the researcher's .env (SAR_TARGET_PATH)."""
+    """Read the canonical target path from the researcher's .env (SAR_TARGET_PATH).
+
+    Fails loudly if SAR_TARGET_PATH is not found in .env.
+    """
     env_path = supervised_repo / ".env"
-    target_rel = "../sar-rag-target"
-    if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("SAR_TARGET_PATH="):
-                target_rel = line.split("=", 1)[1].strip()
-                break
+    if not env_path.exists():
+        raise RuntimeError(f"No .env found at {env_path}. SAR_TARGET_PATH must be set.")
+    target_rel = ""
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith("SAR_TARGET_PATH="):
+            target_rel = line.split("=", 1)[1].strip()
+            break
+    if not target_rel:
+        raise RuntimeError(f"SAR_TARGET_PATH not found in {env_path}")
     return (supervised_repo / target_rel).resolve()
 
 

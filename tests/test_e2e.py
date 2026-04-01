@@ -71,8 +71,8 @@ _RAG_TARGET = _SUPERVISOR_ROOT.parent / "sar-rag-target"
 
 def _project_dir() -> Path:
     """Return the current project directory from env vars."""
-    root = Path(os.environ.get("SAR_PROJECTS_ROOT", "/tmp/sar-projects"))
-    pid = os.environ.get("SAR_PROJECT_ID", "default")
+    root = Path(os.environ["SAR_PROJECTS_ROOT"])
+    pid = os.environ["SAR_PROJECT_ID"]
     return root / pid
 
 
@@ -137,7 +137,7 @@ class _E2EProjectBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls._project_id = f"e2e-{cls.__name__.lower()}-{uuid4().hex[:8]}"
-        projects_root = os.environ.get("SAR_PROJECTS_ROOT", "/tmp/sar-projects")
+        projects_root = os.environ["SAR_PROJECTS_ROOT"]
         cls._project_path = Path(projects_root) / cls._project_id
         cls._env_patcher = unittest.mock.patch.dict(
             "os.environ", {"SAR_PROJECT_ID": cls._project_id},

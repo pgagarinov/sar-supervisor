@@ -29,9 +29,12 @@ def load_harness_config(workspace: Path) -> dict[str, Any]:
 
 
 def _project_dir() -> Path:
-    """Resolve the project directory from SAR_PROJECTS_ROOT / SAR_PROJECT_ID."""
-    root = Path(os.environ.get("SAR_PROJECTS_ROOT", "/tmp/sar-projects"))
-    project_id = os.environ.get("SAR_PROJECT_ID", "default")
+    """Resolve the project directory from SAR_PROJECTS_ROOT / SAR_PROJECT_ID.
+
+    Both env vars MUST be set — no defaults.
+    """
+    root = Path(os.environ["SAR_PROJECTS_ROOT"])
+    project_id = os.environ["SAR_PROJECT_ID"]
     return root / project_id
 
 
@@ -87,9 +90,9 @@ class RepoPaths:
     report_map: dict[str, Path]
     config_dirs: tuple[Path, ...]
     config: dict[str, Any]
-    project_id: str = "default"
-    project_dir: Path = _project_dir()
-    clone_dir: Path = _project_dir() / "clones"
+    project_id: str
+    project_dir: Path
+    clone_dir: Path
 
     @classmethod
     def discover(
@@ -132,7 +135,7 @@ class RepoPaths:
 
         # Project isolation: all state under one directory
         proj_dir = _project_dir()
-        proj_id = os.environ.get("SAR_PROJECT_ID", "default")
+        proj_id = os.environ["SAR_PROJECT_ID"]
         state_dir = proj_dir / "state"
         clone_dir_path = proj_dir / "clones"
         log_dir = proj_dir / "logs"

@@ -205,7 +205,11 @@ class HarnessTestCase(unittest.TestCase):
         fake_config_dir.mkdir(exist_ok=True)
 
         with (
-            patch.dict(os.environ, {"CLAUDE_CONFIG_DIRS": str(fake_config_dir)}),
+            patch.dict(os.environ, {
+                "CLAUDE_CONFIG_DIRS": str(fake_config_dir),
+                "SAR_PROJECTS_ROOT": str(self.root / "projects"),
+                "SAR_PROJECT_ID": "test-loop",
+            }),
             patch("supervisor_harness.cli.read_pid", return_value=None),
             patch("supervisor_harness.cli.process_running", return_value=False),
             patch(
