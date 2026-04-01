@@ -241,11 +241,17 @@ def build_launch_spec(
         env_prefix += f"SAR_RV_ID={shlex.quote(variant_id)} "
     if target_repo:
         env_prefix += f"SAR_TARGET_REPO={shlex.quote(str(target_repo))} "
+        env_prefix += f"SAR_TARGET_PATH={shlex.quote(str(target_repo))} "
     if canonical_target:
         env_prefix += f"SAR_CANONICAL_TARGET={shlex.quote(str(canonical_target))} "
     # Pass project isolation env vars to child
     env_prefix += f"SAR_PROJECT_ID={shlex.quote(paths.project_id)} "
     env_prefix += f"SAR_PROJECTS_ROOT={shlex.quote(str(paths.project_dir.parent))} "
+    # Pass project-scoped report/cache paths so target's paths.py gets them
+    report_dir = paths.project_dir / "reports"
+    cache_dir = paths.project_dir / "cache"
+    env_prefix += f"SAR_RAG_REPORT_PATH={shlex.quote(str(report_dir / 'rag-eval-report.json'))} "
+    env_prefix += f"SAR_RAG_INDEX_CACHE_DIR={shlex.quote(str(cache_dir))} "
 
     resolve_dir = pixi_resolve_dir or paths.supervised_repo
     command = (

@@ -408,7 +408,14 @@ def stop_run(paths: RepoPaths, *, force: bool = False) -> bool:
         cleanup_state(paths)
         return False
     sig = signal.SIGKILL if force else signal.SIGTERM
-    os.kill(pid, sig)
+    # Kill entire process group (includes Claude child processes)
+    try:
+        os.killpg(os.getpgid(pid), sig)
+    except (ProcessLookupError, PermissionError):
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
     deadline = time.time() + (2 if force else 10)
     while time.time() < deadline:
         if not process_running(pid):
@@ -701,7 +708,7 @@ def stop_researcher_variant(paths: RepoPaths, variant_id: str) -> bool:
     Use park_researcher_variant() to stop + preserve for merge decisions.
     Use discard_researcher_variant() to stop + destroy everything.
     """
-    researcher_clone = Path(f"/tmp/sar-research-loop--{variant_id}")
+    researcher_clone = paths.clone_dir / f"{paths.supervised_repo.name}--{variant_id}"
     supervised = researcher_clone if researcher_clone.exists() else paths.supervised_repo
 
     var_paths = RepoPaths.discover(
