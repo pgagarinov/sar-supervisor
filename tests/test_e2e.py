@@ -76,6 +76,16 @@ def _project_dir() -> Path:
     return root / pid
 
 
+def _project_target() -> Path:
+    """Return the project's target clone path."""
+    return _project_dir() / "clones" / "sar-rag-target"
+
+
+def _project_state() -> Path:
+    """Return the project's state directory."""
+    return _project_dir() / "state"
+
+
 def _pixi_run(repo: Path, *args: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["pixi", "run", *args],
@@ -381,7 +391,7 @@ class TestVariantLifecycleE2E(_E2EProjectBase):
             got = _wait_for_iterations(vid, 1)
             self.assertTrue(got, "Need at least 1 iteration")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
-            parked = json.loads((_SUPERVISOR_ROOT / ".supervisor" / f"parked-{vid}.json").read_text())
+            parked = json.loads((_project_state() / f"parked-{vid}.json").read_text())
             self.assertEqual(parked["status"], "parked")
             self.assertGreaterEqual(parked["iterations"]["total"], 1)
         finally:
@@ -474,13 +484,13 @@ class TestMergeWTAE2E(_E2EProjectBase):
         """#25: After WTA merge, canonical HEAD matches variant's target."""
         vid = "e2e-wta-25"
         try:
-            baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            baseline_head = _git(_project_target(), "rev-parse", "HEAD")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
             got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
-            new_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            new_head = _git(_project_target(), "rev-parse", "HEAD")
             self.assertNotEqual(baseline_head, new_head)
         finally:
             _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
@@ -495,7 +505,7 @@ class TestMergeWTAE2E(_E2EProjectBase):
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
-            backup = _SUPERVISOR_ROOT / ".supervisor" / "snapshots" / "pre-merge-backup"
+            backup = _project_state() / "snapshots" / "pre-merge-backup"
             self.assertTrue(backup.exists(), "pre-merge-backup should exist")
         finally:
             _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
@@ -510,8 +520,8 @@ class TestMergeWTAE2E(_E2EProjectBase):
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
-            head = _git(_RAG_TARGET, "rev-parse", "HEAD")
-            baseline = _git(_RAG_TARGET, "rev-parse", "baseline")
+            head = _git(_project_target(), "rev-parse", "HEAD")
+            baseline = _git(_project_target(), "rev-parse", "baseline")
             self.assertEqual(head, baseline)
         finally:
             _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
@@ -525,7 +535,7 @@ class TestMergeCherryPickE2E(_E2EProjectBase):
         """#28: Cherry-pick commits from a parked researcher variant."""
         vid = "e2e-cp-28"
         try:
-            baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            baseline_head = _git(_project_target(), "rev-parse", "HEAD")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
             got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
@@ -541,14 +551,14 @@ class TestMergeCherryPickE2E(_E2EProjectBase):
         """#30: After cherry-pick with applied commits, baseline tag moves."""
         vid = "e2e-cp-30"
         try:
-            old_baseline = _git(_RAG_TARGET, "rev-parse", "baseline")
+            old_baseline = _git(_project_target(), "rev-parse", "baseline")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
             got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             r = _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "cherry-pick")
             if r.returncode == 0 and "applied" in r.stdout:
-                new_baseline = _git(_RAG_TARGET, "rev-parse", "baseline")
+                new_baseline = _git(_project_target(), "rev-parse", "baseline")
                 self.assertNotEqual(old_baseline, new_baseline, "Baseline should move after cherry-pick")
         finally:
             _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
@@ -567,10 +577,10 @@ class TestMergeBranchAndContinueE2E(_E2EProjectBase):
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             # Record variant's target HEAD
-            parked = json.loads((_SUPERVISOR_ROOT / ".supervisor" / f"parked-{vid}.json").read_text())
+            parked = json.loads((_project_state() / f"parked-{vid}.json").read_text())
             variant_head = parked.get("target_head")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "branch-and-continue", timeout=120)
-            canonical_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            canonical_head = _git(_project_target(), "rev-parse", "HEAD")
             if variant_head:
                 self.assertEqual(canonical_head, variant_head)
         finally:
@@ -586,7 +596,7 @@ class TestMergeBranchAndContinueE2E(_E2EProjectBase):
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "branch-and-continue", timeout=120)
-            pixi = _RAG_TARGET / ".pixi"
+            pixi = _project_target() / ".pixi"
             self.assertTrue(pixi.exists() or pixi.is_symlink(), ".pixi should exist after B&C")
         finally:
             _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
@@ -601,7 +611,7 @@ class TestMergeBranchAndContinueE2E(_E2EProjectBase):
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "branch-and-continue", timeout=120)
-            backup = Path(f"{_RAG_TARGET}.pre-merge-backup")
+            backup = Path(f"{_project_target()}.pre-merge-backup")
             self.assertTrue(backup.exists(), "Backup of old canonical should exist")
         finally:
             _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
@@ -619,14 +629,14 @@ class TestRollbackE2E(_E2EProjectBase):
         """#34: Rollback after WTA restores original HEAD."""
         vid = "e2e-roll-34"
         try:
-            baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            baseline_head = _git(_project_target(), "rev-parse", "HEAD")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
             got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "rollback", timeout=120)
-            restored = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            restored = _git(_project_target(), "rev-parse", "HEAD")
             self.assertEqual(baseline_head, restored, "HEAD should be restored to baseline")
         finally:
             _cleanup_variant(vid)
@@ -635,14 +645,14 @@ class TestRollbackE2E(_E2EProjectBase):
         """#35: Rollback after cherry-pick restores HEAD."""
         vid = "e2e-roll-35"
         try:
-            baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            baseline_head = _git(_project_target(), "rev-parse", "HEAD")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
             got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "cherry-pick")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "rollback", timeout=120)
-            restored = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            restored = _git(_project_target(), "rev-parse", "HEAD")
             self.assertEqual(baseline_head, restored)
         finally:
             _cleanup_variant(vid)
@@ -651,15 +661,15 @@ class TestRollbackE2E(_E2EProjectBase):
         """#36: Rollback after B&C restores the original canonical directory."""
         vid = "e2e-roll-36"
         try:
-            baseline_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            baseline_head = _git(_project_target(), "rev-parse", "HEAD")
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "start", "--id", vid, timeout=120)
             got = _wait_for_iterations(vid, 1)
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "branch-and-continue", timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "rollback", timeout=120)
-            self.assertTrue(_RAG_TARGET.exists(), "Canonical should be restored")
-            restored_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            self.assertTrue(_project_target().exists(), "Canonical should be restored")
+            restored_head = _git(_project_target(), "rev-parse", "HEAD")
             self.assertEqual(baseline_head, restored_head)
         finally:
             _cleanup_variant(vid)
@@ -686,7 +696,7 @@ class TestMergeLockE2E(_E2EProjectBase):
             self.assertTrue(got)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
-            lock_path = _SUPERVISOR_ROOT / ".supervisor" / "merge.lock"
+            lock_path = _project_state() / "merge.lock"
             self.assertFalse(lock_path.exists(), "Lock should be released after merge")
         finally:
             _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "rollback")
@@ -773,7 +783,7 @@ class TestEdgeCasesE2E(_E2EProjectBase):
                 time.sleep(2)
             # Park should still work
             r = _pixi_run(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
-            parked_path = _SUPERVISOR_ROOT / ".supervisor" / f"parked-{vid}.json"
+            parked_path = _project_state() / f"parked-{vid}.json"
             self.assertTrue(parked_path.exists(), "Parked state should be created even for dead process")
         finally:
             _cleanup_variant(vid)
@@ -799,17 +809,17 @@ class TestEdgeCasesE2E(_E2EProjectBase):
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "park", "--id", vid, timeout=120)
 
             # Manually commit in canonical
-            (_RAG_TARGET / "manual.txt").write_text("manual change")
-            subprocess.run(["git", "add", "-A"], cwd=_RAG_TARGET, check=True, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "manual divergence"], cwd=_RAG_TARGET, check=True, capture_output=True)
-            diverged_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            (_project_target() / "manual.txt").write_text("manual change")
+            subprocess.run(["git", "add", "-A"], cwd=_project_target(), check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "manual divergence"], cwd=_project_target(), check=True, capture_output=True)
+            diverged_head = _git(_project_target(), "rev-parse", "HEAD")
 
             # Merge WTA (overwrites canonical)
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "merge", "--id", vid, "--strategy", "winner-takes-all", timeout=120)
 
             # Rollback should restore the diverged state
             _pixi_run_check(_SUPERVISOR_ROOT, "researcher-variant", "rollback", timeout=120)
-            restored_head = _git(_RAG_TARGET, "rev-parse", "HEAD")
+            restored_head = _git(_project_target(), "rev-parse", "HEAD")
             self.assertEqual(diverged_head, restored_head, "Rollback should restore diverged state")
         finally:
             _cleanup_variant(vid)
